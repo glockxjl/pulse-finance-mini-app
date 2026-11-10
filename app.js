@@ -24,15 +24,15 @@ const CATEGORIES = {
 };
 
 const LT_MERCHANT_RULES = [
-  { keywords: ["lidl", "maxima", "iki", "rimi", "silas", "aibe", "express market", "vynoteka", "barbora"], type: "expense", category: "Продукты" },
-  { keywords: ["wolt", "bolt food", "caffeine", "hesburger", "mcdonald", "kfc", "dodo", "circle k", "viada", "grill london", "cancan", "talutti", "vero cafe"], type: "expense", category: "Кафе и доставка" },
-  { keywords: ["bolt", "judu", "trafi", "ltg link", "citybee", "spark", "uber", "autobus", "parkavim", "unipark"], type: "expense", category: "Транспорт" },
-  { keywords: ["ignitis", "vilniaus vandenys", "telia", "bite", "tele2", "vieningoji saskaita", "energija", "nuoma", "komunal"], type: "expense", category: "Жильё" },
-  { keywords: ["eurovaistine", "camelia", "benu", "gintarine", "anteja", "klinika", "odontolog", "vaistine"], type: "expense", category: "Здоровье" },
+  { keywords: ["lidl", "maxima", "iki", "rimi", "norfa", "silas", "šilas", "aibe", "aibė", "express market", "vynoteka", "barbora", "assorti"], type: "expense", category: "Продукты" },
+  { keywords: ["wolt", "bolt food", "caffeine", "hesburger", "mcdonald", "kfc", "subway", "dodo", "grill london", "cancan", "cili", "чили", "talutti", "vero cafe", "huracan", "starbucks", "caif", "paul", "crustum"], type: "expense", category: "Кафе и доставка" },
+  { keywords: ["bolt", "judu", "trafi", "trafik", "ltg link", "citybee", "spark", "uber", "autobus", "parkavim", "unipark", "stova", "viada", "circle k", "neste", "emsi", "baltic petroleum", "orlen"], type: "expense", category: "Транспорт" },
+  { keywords: ["ignitis", "vilniaus vandenys", "telia", "bite", "bitė", "tele2", "cgates", "vieningoji saskaita", "energija", "nuoma", "komunal", "busto"], type: "expense", category: "Жильё" },
+  { keywords: ["eurovaistine", "eurovaistinė", "camelia", "benu", "gintarine", "gintarinė", "apotheka", "kardiolita", "anteja", "antėja", "klinika", "odontolog", "vaistine"], type: "expense", category: "Здоровье" },
   { keywords: ["apple.com/bill", "spotify", "netflix", "youtube", "google", "openai", "chatgpt", "icloud", "playstation", "steam"], type: "expense", category: "Подписки" },
-  { keywords: ["senukai", "depo", "ikea", "zara", "sinsay", "pepco", "pigu", "varle", "kesko", "jysk", "h&m", "new yorker", "sportland"], type: "expense", category: "Покупки" },
-  { keywords: ["forum cinemas", "apollo", "bilietai", "kino", "event"], type: "expense", category: "Развлечения" },
-  { keywords: ["darbo uzmokestis", "atlyginimas", "algos", "salary", "uab "], type: "income", category: "Зарплата" }
+  { keywords: ["senukai", "ermitazas", "ermitažas", "depo", "ikea", "zara", "sinsay", "pepco", "pigu", "varle", "varlė", "kesko", "jysk", "h&m", "new yorker", "sportland", "about you", "zalando", "vinted", "topline", "topocentras"], type: "expense", category: "Покупки" },
+  { keywords: ["forum cinemas", "multikino", "apollo", "bilietai", "kino", "event", "akropolis", "акрополис", "ozas", "panorama"], type: "expense", category: "Развлечения" },
+  { keywords: ["darbo uzmokestis", "atlyginimas", "alga", "algos", "salary", "swedbank", "uab "], type: "income", category: "Зарплата" }
 ];
 
 const STORAGE_KEY_TX = "finance_mini_app_demo_tx_v2";
@@ -297,11 +297,68 @@ function learnMerchantCategory(description, category) {
   saveLearnedMerchants();
 }
 
-// Клиент для связи с тестовым контуром n8n (отправляет X-Telegram-Init-Data)
+// Всплывающее уведомление Toast
+let appToastTimer = null;
+function showToast(message) {
+  const el = document.getElementById("appToast");
+  if (!el || !message) return;
+  el.textContent = message;
+  el.classList.add("visible");
+  clearTimeout(appToastTimer);
+  appToastTimer = setTimeout(() => {
+    el.classList.remove("visible");
+  }, 2600);
+}
+
+// Нормализация массива транзакций из любого формата ответа n8n
+function normalizeApiTransactions(data) {
+  if (!data) return [];
+  let rawList = [];
+  if (Array.isArray(data)) {
+    if (data.length === 1 && Array.isArray(data[0]?.transactions)) {
+      rawList = data[0].transactions;
+    } else if (data.length === 1 && Array.isArray(data[0]?.data)) {
+      rawList = data[0].data;
+    } else {
+      rawList = data;
+    }
+  } else if (Array.isArray(data.transactions)) {
+    rawList = data.transactions;
+  } else if (Array.isArray(data.rows)) {
+    rawList = data.rows;
+  } else if (Array.isArray(data.data)) {
+    rawList = data.data;
+  }
+
+  return rawList
+    .filter((r) => r && (r.amount !== undefined || r.description !== undefined))
+    .map((r, idx) => {
+      const amt = Math.abs(Number(String(r.amount ?? 0).replace(",", ".")) || 0);
+      const txType = String(r.type || "expense").toLowerCase() === "income" ? "income" : "expense";
+      const rawCat = String(r.category || "").trim();
+      const cat = rawCat === "Разное" || rawCat === "Другое" ? "Прочее" : (rawCat || "Прочее");
+      const dateStr = String(r.date || r.createdAt || new Date().toISOString()).slice(0, 10);
+      const extId = String(r.externalId || r.id || `api-${dateStr}-${idx}`);
+      return {
+        id: String(r.id || extId),
+        externalId: extId,
+        date: dateStr,
+        type: txType,
+        amount: Math.round(amt * 100) / 100,
+        category: cat,
+        description: String(r.description || cat)
+      };
+    });
+}
+
+// Клиент для связи с тестовым контуром n8n (отправляет только X-Telegram-Init-Data без testBypass)
 async function apiCallN8n(action, payload = {}) {
   if (!state.apiUrl) return null;
   try {
     const initData = window.Telegram?.WebApp?.initData || "";
+    const wrappedPayload = action === "create" && !payload.transaction
+      ? { transaction: payload, ...payload }
+      : payload;
     const response = await fetch(state.apiUrl, {
       method: "POST",
       headers: {
@@ -309,10 +366,9 @@ async function apiCallN8n(action, payload = {}) {
         "X-Telegram-Init-Data": initData
       },
       body: JSON.stringify({
-        ...payload,
         action,
         initData,
-        payload
+        payload: wrappedPayload
       })
     });
     if (!response.ok) return null;
@@ -329,8 +385,12 @@ function formatEUR(value) {
 
 function getCategoryMeta(type, categoryName) {
   const list = CATEGORIES[type] || [];
-  const found = list.find((c) => c.name.toLowerCase() === String(categoryName).toLowerCase());
-  return found || { icon: type === "income" ? "💶" : "💸", color: "#64748b", defaultLimit: 50 };
+  const norm = String(categoryName || "").trim().toLowerCase();
+  if (norm === "разное" || norm === "другое") {
+    return { name: "Прочее", icon: "📦", color: "#64748b", defaultLimit: 50 };
+  }
+  const found = list.find((c) => c.name.toLowerCase() === norm);
+  return found || { icon: type === "income" ? "💶" : "📦", color: "#64748b", defaultLimit: 50 };
 }
 
 function autoDetectLtCategory(merchant, details, isCredit) {
@@ -366,7 +426,15 @@ function autoDetectLtCategory(merchant, details, isCredit) {
 
   // 3. Литовский словарь магазинов Swedbank
   for (const rule of LT_MERCHANT_RULES) {
-    if (rule.type === "expense" && rule.keywords.some((kw) => combined.includes(kw))) {
+    if (
+      rule.type === "expense" &&
+      rule.keywords.some((kw) => {
+        if (kw.length <= 3) {
+          return new RegExp(`(^|[^a-zа-яё0-9])${kw}([^a-zа-яё0-9]|$)`, "i").test(combined);
+        }
+        return combined.includes(kw);
+      })
+    ) {
       return rule.category;
     }
   }
@@ -618,12 +686,33 @@ function renderTxRowHTML(tx) {
           <div class="tx-sub">${escapeHtml(tx.category)}</div>
         </div>
       </div>
-      <div class="tx-val ${tx.type} sensitive-num">${sign}${formatEUR(tx.amount)}</div>
+      <div class="tx-right-group">
+        <div class="tx-val ${tx.type} sensitive-num">${sign}${formatEUR(tx.amount)}</div>
+        <button type="button" class="tx-quick-del" data-quick-del-id="${escapeHtml(tx.id)}" title="Удалить запись" aria-label="Удалить запись">×</button>
+      </div>
     </div>
   `;
 }
 
 function bindTxItemClicks(container) {
+  container.querySelectorAll(".tx-quick-del").forEach((delBtn) => {
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const targetId = delBtn.getAttribute("data-quick-del-id");
+      if (!targetId) return;
+      const tx = state.transactions.find((t) => t.id === targetId);
+      const externalId = tx?.externalId || targetId;
+      triggerHaptic("light");
+      askNativeConfirm("Удалить эту операцию?", async () => {
+        state.transactions = state.transactions.filter((t) => t.id !== targetId);
+        saveTransactions();
+        renderAll();
+        showToast("Операция удалена");
+        await apiCallN8n("delete", { id: targetId, externalId });
+      });
+    });
+  });
+
   container.querySelectorAll(".tx-row").forEach((el) => {
     el.addEventListener("click", () => {
       triggerHaptic("light");
@@ -1288,6 +1377,7 @@ function initEvents() {
     smartInput.value = "";
     smartPreview.classList.add("hidden");
     renderAll();
+    showToast(`Записано: ${parsed.category} • €${parsed.amount.toFixed(2)}`);
     await apiCallN8n("create", newTx);
   };
   smartInput?.addEventListener("input", updateSmartPreview);
@@ -1370,6 +1460,27 @@ function initEvents() {
   });
 
   document.getElementById("seeAllHistoryBtn").addEventListener("click", () => switchTab("view-history"));
+
+  document.getElementById("quickRefreshBtn")?.addEventListener("click", async () => {
+    triggerHaptic("light");
+    if (state.apiUrl) {
+      showToast("Синхронизация с n8n...");
+      const res = await apiCallN8n("list");
+      const list = normalizeApiTransactions(res);
+      if (list.length > 0) {
+        state.transactions = list;
+        saveTransactions();
+        renderAll();
+        showToast("Данные обновлены из n8n");
+      } else {
+        renderAll();
+        showToast("Требуется Telegram initData (или включи DEMO)");
+      }
+    } else {
+      renderAll();
+      showToast("Локальные демо-данные обновлены");
+    }
+  });
 
   // Шаблоны в форме
   document.querySelectorAll("#quickTemplatesBar .preset-pill").forEach((chip) => {
@@ -1488,6 +1599,7 @@ function initEvents() {
     saveTransactions();
     renderAll();
     document.getElementById("txFormModal").classList.add("hidden");
+    showToast(state.editingTxId ? "Операция обновлена" : "Операция сохранена");
     if (savedTx && !state.editingTxId) {
       await apiCallN8n("create", savedTx);
     }
@@ -1611,6 +1723,7 @@ function initEvents() {
     saveTransactions();
     closeDetail();
     renderAll();
+    showToast("Операция продублирована на сегодня");
     await apiCallN8n("create", copyTx);
   });
 
@@ -1623,6 +1736,7 @@ function initEvents() {
       saveTransactions();
       closeDetail();
       renderAll();
+      showToast("Операция удалена");
       await apiCallN8n("delete", { id: targetId, externalId });
     });
   });
@@ -1665,11 +1779,15 @@ function initEvents() {
     localStorage.setItem(STORAGE_KEY_API, state.apiUrl);
     updateModeBadge();
     const res = await apiCallN8n("list");
-    if (res && Array.isArray(res.transactions)) {
-      state.transactions = res.transactions;
+    const list = normalizeApiTransactions(res);
+    if (list.length > 0) {
+      state.transactions = list;
       saveTransactions();
       renderAll();
       settingsModal.classList.add("hidden");
+      showToast(`Синхронизировано с n8n (${list.length} опер.)`);
+    } else {
+      showToast("Для запроса к n8n открой приложение внутри Telegram");
     }
   });
 
@@ -1722,8 +1840,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderAll();
   if (state.apiUrl && window.Telegram?.WebApp?.initData) {
     const res = await apiCallN8n("list");
-    if (res && Array.isArray(res.transactions)) {
-      state.transactions = res.transactions;
+    const list = normalizeApiTransactions(res);
+    if (list.length > 0) {
+      state.transactions = list;
       saveTransactions();
       renderAll();
     }

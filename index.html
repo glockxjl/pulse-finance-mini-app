@@ -178,7 +178,10 @@
       <section class="feed-card">
         <div class="feed-header">
           <h2>Лента операций</h2>
-          <button class="ghost-link" id="seeAllHistoryBtn">Все (<span id="summaryCount">0</span>) →</button>
+          <div class="feed-header-actions">
+            <button type="button" class="ghost-link" id="quickRefreshBtn" title="Обновить данные">↻</button>
+            <button class="ghost-link" id="seeAllHistoryBtn">Все (<span id="summaryCount">0</span>) →</button>
+          </div>
         </div>
         <div class="day-groups" id="recentTxList"></div>
       </section>
@@ -364,8 +367,8 @@
 
         <div class="ios-shortcut-card">
           <div>
-            <strong>Автоматика iPhone (Apple Pay)</strong>
-            <p>Мгновенная отправка суммы и магазина через iOS Shortcuts при касании терминала</p>
+            <strong>Автоматика iPhone (Apple Pay) <span class="deferred-badge">В планах API</span></strong>
+            <p>Демо-тест локально. Прямой приём вебхуков из iOS Shortcuts отложен до введения отдельного токена авторизации (без testBypass).</p>
           </div>
           <button type="button" class="secondary-btn compact" id="simulateApplePayBtn">Тест €16.40</button>
         </div>
@@ -504,6 +507,8 @@
         <span>Банк</span>
       </button>
     </nav>
+
+    <div class="app-toast" id="appToast" role="status" aria-live="polite"></div>
   </div>
 
   <script src="app.js"></script>
