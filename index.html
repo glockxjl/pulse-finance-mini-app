@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>PULSE • Финансовый контроль</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-frame">
+    <!-- Верхний бар -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">PULSE</div>
+          <div class="brand-sub" id="currentPeriodLabel">Ноябрь 2026</div>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="period-switch" id="periodBar">
+          <button class="p-chip" data-period="week">7Д</button>
+          <button class="p-chip active" data-period="month">МЕС</button>
+          <button class="p-chip" data-period="all">ВСЕ</button>
+          <button class="p-chip" data-period="custom" title="Выбрать даты">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </button>
+        </div>
+
+        <button class="icon-pill" id="privacyToggleBtn" title="Скрыть или показать суммы">
+          <svg id="eyeIconOpen" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+
+        <button class="status-pill" id="modeToggleBtn" title="Режим подключения">
+          <span class="pulse-dot" id="modeDot"></span>
+          <span id="modeBadgeText">DEMO</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Выбор произвольных дат -->
+    <div class="custom-dates-drawer hidden" id="customDatesBox">
+      <input type="date" id="dateFrom" />
+      <span>→</span>
+      <input type="date" id="dateTo" />
+    </div>
+
+    <!-- ЭКРАН 1: ДАШБОРД (BENTO GRID) -->
+    <main class="screen active" id="view-home">
+      <!-- Главная тёмная карта: Безопасный бюджет на сегодня + Общий баланс -->
+      <section class="vault-card">
+        <div class="vault-glow"></div>
+        <div class="vault-top">
+          <div>
+            <div class="vault-eyebrow-row">
+              <span class="vault-eyebrow">БЕЗОПАСНО ТРАТИТЬ СЕГОДНЯ</span>
+              <span class="health-badge" id="healthScoreBadge">92 PULSE</span>
+            </div>
+            <div class="vault-daily-safe sensitive-num" id="dailySafeHero">€0.00</div>
+            <span class="vault-subtext" id="dailySafeSubtext">за вычетом копилки и будущих счетов</span>
+          </div>
+          <button class="swedbank-badge-btn" id="quickImportBankBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Swedbank</span>
+          </button>
+        </div>
+
+        <div class="vault-divider"></div>
+
+        <div class="vault-bottom">
+          <div class="vault-metric">
+            <span class="v-label">Общий остаток</span>
+            <span class="v-val sensitive-num" id="summaryBalance">€0.00</span>
+          </div>
+          <div class="vault-metric">
+            <span class="v-label">Доходы</span>
+            <span class="v-val pos sensitive-num" id="summaryIncome">+€0.00</span>
+          </div>
+          <div class="vault-metric">
+            <span class="v-label">Расходы</span>
+            <span class="v-val neg sensitive-num" id="summaryExpense">−€0.00</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Живая строка умного инсайта -->
+      <div class="insight-banner" id="smartInsightBanner">
+        <span class="insight-spark">⚡</span>
+        <span class="insight-text" id="smartInsightText">Анализирую темп расходов...</span>
+      </div>
+
+      <!-- Умный строковый ввод одной фразой (из actual-budget-telegram-bot) -->
+      <section class="smart-parse-bar">
+        <div class="smart-input-wrap">
+          <span class="smart-cmd-icon">⌘</span>
+          <input
+            type="text"
+            id="smartQuickTextInput"
+            placeholder="Быстрая запись: «Lidl 14.50», «Кофе 3.80 50%» или «+120 аванс»"
+            autocomplete="off"
+          />
+          <button type="button" class="smart-send-btn" id="smartQuickSendBtn" title="Записать мгновенно">↵</button>
+        </div>
+        <div class="smart-live-preview hidden" id="smartParsePreview"></div>
+      </section>
+
+      <!-- BENTO РЯД (3 плитки): Копилка + Совместные 50/50 + Обязательные счета -->
+      <section class="bento-grid-3">
+        <!-- Плитка 1: Кольцо копилки и Целей -->
+        <div class="bento-tile Interactive-tile" id="openGoalsModalBtn">
+          <div class="tile-head">
+            <span class="tile-title">Цели и Резерв</span>
+            <span class="tile-edit">→</span>
+          </div>
+          <div class="ring-wrap">
+            <svg class="ring-svg" width="60" height="60" viewBox="0 0 68 68">
+              <circle class="ring-bg" cx="34" cy="34" r="28" />
+              <circle class="ring-progress" id="savingsRingCircle" cx="34" cy="34" r="28" stroke-dasharray="175.9" stroke-dashoffset="40" />
+            </svg>
+            <div class="ring-info">
+              <div class="ring-goal sensitive-num" id="savingsGoalValue">€200</div>
+              <div class="ring-free" id="freeAfterSavingsValue">План мес.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Плитка 2: Взаиморасчёты 50/50 -->
+        <div class="bento-tile Interactive-tile" id="openSharedModalBtn">
+          <div class="tile-head">
+            <span class="tile-title">Сплит 50/50</span>
+            <span class="tile-tag" id="sharedSettleTag">Баланс</span>
+          </div>
+          <div class="shared-big sensitive-num" id="summaryShared">€0.00</div>
+          <div class="shared-foot" id="sharedWhoOwesText">Нажми для сверки</div>
+        </div>
+      </section>
+
+      <!-- Виджет обязательных платежей месяца (Аренда / Ignitis / Подписки) -->
+      <section class="bills-strip-card" id="openBillsModalBtn">
+        <div class="bills-left">
+          <div class="bills-icon">🗓️</div>
+          <div>
+            <div class="bills-title">Обязательные платежи месяца</div>
+            <div class="bills-sub" id="billsStatusSub">Оплачено 2 из 4 • Ждёт оплаты: €0</div>
+          </div>
+        </div>
+        <span class="bills-arrow">Упр. →</span>
+      </section>
+
+      <!-- Панель мгновенного запуска 1-Tap -->
+      <section class="quick-launch">
+        <button class="launch-card expense" id="quickAddExpenseBtn">
+          <div class="launch-icon minus">−</div>
+          <div class="launch-text">
+            <strong>Записать расход</strong>
+            <span>Чек или сплит 50%</span>
+          </div>
+        </button>
+        <button class="launch-card income" id="quickAddIncomeBtn">
+          <div class="launch-icon plus">+</div>
+          <div class="launch-text">
+            <strong>Записать доход</strong>
+            <span>Зарплата / возврат</span>
+          </div>
+        </button>
+      </section>
+
+      <!-- Лента последних операций, сгруппированная по дням -->
+      <section class="feed-card">
+        <div class="feed-header">
+          <h2>Лента операций</h2>
+          <button class="ghost-link" id="seeAllHistoryBtn">Все (<span id="summaryCount">0</span>) →</button>
+        </div>
+        <div class="day-groups" id="recentTxList"></div>
+      </section>
+    </main>
+
+    <!-- ЭКРАН 2: ЖУРНАЛ ОПЕРАЦИЙ -->
+    <main class="screen" id="view-history">
+      <section class="feed-card">
+        <div class="feed-header">
+          <h2>Журнал <span class="counter-badge" id="historyCountBadge">0</span></h2>
+          <button type="button" class="ghost-link" id="exportCsvBtn">↓ Скачать CSV</button>
+        </div>
+
+        <div class="search-box">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            type="text"
+            id="historySearchInput"
+            placeholder="Найти магазин, категорию или сумму..."
+          />
+        </div>
+
+        <div class="filter-pills-row">
+          <select id="filterType" class="sleek-select">
+            <option value="all">Все операции</option>
+            <option value="expense">Только расходы</option>
+            <option value="income">Только доходы</option>
+          </select>
+          <select id="filterCategory" class="sleek-select">
+            <option value="all">Все категории</option>
+          </select>
+        </div>
+
+        <div class="day-groups" id="historyTxList"></div>
+      </section>
+    </main>
+
+    <!-- ЭКРАН 3: АНАЛИТИКА (ИНТЕРАКТИВНЫЙ DONUT + СВЕТОФОР БЮДЖЕТОВ + РИТМ НЕДЕЛИ) -->
+    <main class="screen" id="view-analytics">
+      <!-- Интерактивный бублик категорий (клик по сектору или легенде) -->
+      <section class="feed-card">
+        <div class="feed-header">
+          <h2>Структура расходов</h2>
+          <button type="button" class="ghost-link" id="copyPeriodReportBtn">📋 Копировать отчёт</button>
+        </div>
+
+        <div class="donut-layout">
+          <div class="donut-box">
+            <svg width="154" height="154" viewBox="0 0 150 150" id="donutSvg"></svg>
+            <div class="donut-center">
+              <span class="donut-caption" id="donutCenterLabel">Все траты</span>
+              <strong class="donut-total sensitive-num" id="analyticsTotalExpenseLabel">€0</strong>
+            </div>
+          </div>
+
+          <div class="donut-legend" id="donutLegend"></div>
+        </div>
+        <p class="tap-hint">💡 Нажми на любую категорию справа или сектор круга для фильтра</p>
+      </section>
+
+      <!-- Лимиты по категориям со светофором -->
+      <section class="feed-card">
+        <div class="feed-header">
+          <h2>Лимиты и категории</h2>
+          <span class="subtle-tag">Нажми на строку, чтобы задать лимит</span>
+        </div>
+        <div class="category-bars" id="categoryChart"></div>
+      </section>
+
+      <!-- Ритм трат по дням недели -->
+      <section class="feed-card">
+        <div class="feed-header">
+          <h2>Ритм недели (Пн–Вс)</h2>
+          <span class="subtle-tag" id="peakDayLabel">Пик активности</span>
+        </div>
+        <div class="weekday-chart" id="weekdayChart"></div>
+      </section>
+    </main>
+
+    <!-- ШТОРКА 1: СОЗДАНИЕ / РЕДАКТИРОВАНИЕ ОПЕРАЦИИ -->
+    <div class="sheet-backdrop hidden" id="txFormModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3 id="formTitle">Новая операция</h3>
+          <button type="button" class="icon-close" id="closeFormModalBtn">✕</button>
+        </div>
+
+        <!-- Быстрые пресеты 1-Tap -->
+        <div class="preset-strip" id="quickTemplatesBar">
+          <button type="button" class="preset-pill" data-type="expense" data-cat="Продукты" data-desc="Lidl">🛒 Lidl</button>
+          <button type="button" class="preset-pill" data-type="expense" data-cat="Продукты" data-desc="Maxima">🛍️ Maxima</button>
+          <button type="button" class="preset-pill" data-type="expense" data-cat="Кафе и доставка" data-desc="Caffeine">☕ Кофе</button>
+          <button type="button" class="preset-pill" data-type="expense" data-cat="Транспорт" data-desc="Bolt / JUDU">🚌 Транспорт</button>
+          <button type="button" class="preset-pill" data-type="expense" data-cat="Совместные расходы" data-desc="Общий чек" data-split="0.5">🤝 Чек 50/50</button>
+        </div>
+
+        <form id="txForm" novalidate>
+          <div class="type-toggle">
+            <button type="button" class="t-btn active" data-tx-type="expense">Расход</button>
+            <button type="button" class="t-btn" data-tx-type="income">Доход</button>
+          </div>
+
+          <div class="amount-stage">
+            <div class="amount-display">
+              <span class="euro-sign">€</span>
+              <input
+                type="number"
+                id="txAmount"
+                step="0.01"
+                min="0.01"
+                inputmode="decimal"
+                placeholder="0.00"
+                required
+              />
+            </div>
+            <div class="quick-add-amounts">
+              <button type="button" class="add-amt-chip" data-add="5">+€5</button>
+              <button type="button" class="add-amt-chip" data-add="10">+€10</button>
+              <button type="button" class="add-amt-chip" data-add="25">+€25</button>
+              <button type="button" class="add-amt-chip" data-add="50">+€50</button>
+            </div>
+          </div>
+
+          <!-- Деление счёта + кто платил -->
+          <div class="split-bar" id="splitBillGroup">
+            <div class="split-buttons" id="splitPills">
+              <button type="button" class="s-pill active" data-split="1">100% моё</button>
+              <button type="button" class="s-pill" data-split="0.5">50% пополам</button>
+              <button type="button" class="s-pill" data-split="0.3333">33% на троих</button>
+            </div>
+            <div class="split-calc-preview hidden" id="splitPreviewHint"></div>
+          </div>
+
+          <div class="category-chips" id="categoryChips"></div>
+
+          <div class="meta-inputs">
+            <input type="date" id="txDate" required />
+            <input
+              type="text"
+              id="txDescription"
+              maxlength="120"
+              placeholder="Комментарий или магазин..."
+            />
+          </div>
+
+          <div class="form-error hidden" id="formError"></div>
+
+          <button type="submit" class="cta-submit" id="submitTxBtn">Сохранить операцию</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 2: SWEDBANK CSV & APPLE PAY -->
+    <div class="sheet-backdrop hidden" id="bankModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>Swedbank Lithuania & iPhone</h3>
+          <button type="button" class="icon-close" id="closeBankModalBtn">✕</button>
+        </div>
+
+        <p class="sheet-text">
+          Загрузи выписку <code>.csv</code> из Swedbank — алгоритмы распознают сети Литвы (Maxima, Lidl, Iki, Bolt, Ignitis), уберут дубликаты и соберут месячный отчёт.
+        </p>
+
+        <input type="file" id="swedbankFileInput" accept=".csv,text/csv" class="hidden" />
+        <div class="two-btn-grid">
+          <button type="button" class="cta-submit" id="chooseCsvFileBtn">Выбрать CSV файл</button>
+          <button type="button" class="secondary-btn" id="loadSampleSwedbankBtn">Демо-выписка LT</button>
+        </div>
+
+        <div id="bankImportResultBox" class="hidden">
+          <div class="bank-stats-strip" id="bankParsedSummary"></div>
+          <div class="parsed-scroll" id="bankParsedTxList"></div>
+
+          <div class="two-btn-grid" style="margin-top: 10px;">
+            <button type="button" class="secondary-btn" id="copyBankReportBtn">Скопировать отчёт</button>
+            <button type="button" class="cta-submit" id="confirmImportTxBtn">Импортировать</button>
+          </div>
+          <div class="form-success hidden" id="bankImportSuccessMsg"></div>
+        </div>
+
+        <div class="ios-shortcut-card">
+          <div>
+            <strong>Автоматика iPhone (Apple Pay)</strong>
+            <p>Мгновенная отправка суммы и магазина через iOS Shortcuts при касании терминала</p>
+          </div>
+          <button type="button" class="secondary-btn compact" id="simulateApplePayBtn">Тест €16.40</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 3: ЦЕЛИ И КОПИЛКА (РЕЗЕРВ / ФОНД) -->
+    <div class="sheet-backdrop hidden" id="goalsModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>🎯 Цели и План накоплений</h3>
+          <button class="icon-close" id="closeGoalsModalBtn">✕</button>
+        </div>
+        <p class="sheet-text">
+          Укажи, сколько евро в месяц ты откладываешь неприкосновенно. PULSE автоматически вычитает эту сумму из дневного лимита трат.
+        </p>
+
+        <div class="goal-edit-box">
+          <label>Ежемесячный план в копилку (€)</label>
+          <div class="two-btn-grid" style="margin-top: 6px;">
+            <input type="number" id="monthlySavingsInput" class="full-input" step="10" min="0" />
+            <button type="button" class="cta-submit" id="saveSavingsGoalBtn">Обновить план</button>
+          </div>
+        </div>
+
+        <h4 class="sub-heading">Мои целевые конверты (Справочно)</h4>
+        <div class="pockets-list" id="pocketsList"></div>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 4: ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ МЕСЯЦА (КАЛЕНДАРЬ СЧЕТОВ) -->
+    <div class="sheet-backdrop hidden" id="billsModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>🗓️ Обязательные счета месяца</h3>
+          <button class="icon-close" id="closeBillsModalBtn">✕</button>
+        </div>
+        <p class="sheet-text">
+          Отмечай оплаченные счета. Неоплаченные счета заранее резервируются из твоего свободного остатка, чтобы деньги на аренду или интернет не потратились случайно.
+        </p>
+        <div class="bills-checklist" id="billsChecklist"></div>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 5: СПЛИТ 50/50 И СВЕРКА ДОЛГОВ -->
+    <div class="sheet-backdrop hidden" id="sharedModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>🤝 Совместные траты (50/50)</h3>
+          <button class="icon-close" id="closeSharedModalBtn">✕</button>
+        </div>
+        <div class="shared-settle-banner" id="sharedSettleSummaryBox"></div>
+        <div class="parsed-scroll" id="sharedTxListModal"></div>
+        <div style="margin-top: 12px;">
+          <button type="button" class="cta-submit" id="settleSharedRefundBtn">
+            ✅ Записать возврат доли от партнёра
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 6: КАРТОЧКА ОПЕРАЦИИ -->
+    <div class="sheet-backdrop hidden" id="txDetailModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>Карточка операции</h3>
+          <button class="icon-close" id="closeDetailModalBtn">✕</button>
+        </div>
+        <div id="txDetailBody"></div>
+        <div class="four-btn-grid">
+          <button class="danger-btn" id="deleteDemoTxBtn">Удалить</button>
+          <button class="secondary-btn" id="duplicateTxBtn">Повторить</button>
+          <button class="secondary-btn" id="editTxBtn">Изменить</button>
+          <button class="cta-submit" id="okDetailModalBtn">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ШТОРКА 7: ПОДКЛЮЧЕНИЕ N8N -->
+    <div class="sheet-backdrop hidden" id="settingsModal">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <div class="sheet-top">
+          <h3>Источник данных и словарь</h3>
+          <button class="icon-close" id="closeSettingsModalBtn">✕</button>
+        </div>
+        <p class="sheet-text">
+          Локальная песочница (DEMO) или изолированный тестовый контур n8n (таблица <code>Transactions_Test</code>). Боевой бот защищён и не затрагивается.
+        </p>
+        <input
+          type="url"
+          id="apiUrlInput"
+          class="full-input"
+          placeholder="https://glockxjl.app.n8n.cloud/webhook/finance-mini-app-test"
+        />
+        <div class="preset-strip" style="margin-top: 8px; margin-bottom: 4px;">
+          <button type="button" class="preset-pill" id="fillTestWebhookBtn">🔗 Тестовый Webhook n8n</button>
+          <button type="button" class="preset-pill" id="syncFromApiBtn">🔄 Синхронизировать с n8n</button>
+          <button type="button" class="preset-pill" id="clearApiUrlBtn">📴 Офлайн DEMO</button>
+        </div>
+        <div class="learned-dict-box" id="learnedDictSummary">Выучено магазинов: 0</div>
+        <div class="two-btn-grid" style="margin-top: 12px;">
+          <button type="button" class="secondary-btn" id="resetDemoDataBtn">Сбросить демо</button>
+          <button type="button" class="cta-submit" id="saveSettingsBtn">Сохранить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ПАРЯЩИЙ СТЕКЛЯННЫЙ ДОК -->
+    <nav class="floating-dock">
+      <button class="dock-item active" data-target="view-home">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span>Пульс</span>
+      </button>
+
+      <button class="dock-item" data-target="view-history">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        <span>Журнал</span>
+      </button>
+
+      <button class="dock-fab" id="fabAddBtn" title="Новая операция">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+
+      <button class="dock-item" data-target="view-analytics">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+        <span>Разбор</span>
+      </button>
+
+      <button class="dock-item" id="navBankBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M3 10h18"/><polygon points="12 3 2 8 22 8"/><line x1="6" y1="10" x2="6" y2="21"/><line x1="10" y1="10" x2="10" y2="21"/><line x1="14" y1="10" x2="14" y2="21"/><line x1="18" y1="10" x2="18" y2="21"/></svg>
+        <span>Банк</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
