@@ -451,7 +451,7 @@
       </div>
     </div>
 
-    <!-- ШТОРКА 7: ПОДКЛЮЧЕНИЕ N8N -->
+    <!-- ШТОРКА 7: ПОДКЛЮЧЕНИЕ CLOUDFLARE WORKER API -->
     <div class="sheet-backdrop hidden" id="settingsModal">
       <div class="sheet-panel">
         <div class="sheet-handle"></div>
@@ -460,17 +460,17 @@
           <button class="icon-close" id="closeSettingsModalBtn">✕</button>
         </div>
         <p class="sheet-text">
-          Локальная песочница (DEMO) или изолированный тестовый контур n8n (таблица <code>Transactions_Test</code>). Боевой бот защищён и не затрагивается.
+          Локальная песочница (DEMO) или облачный контур Cloudflare Worker + D1 (таблица <code>Transactions_Test</code>). Боевой бот защищён и не затрагивается.
         </p>
         <input
           type="url"
           id="apiUrlInput"
           class="full-input"
-          placeholder="https://glockxjl.app.n8n.cloud/webhook/finance-mini-app-test"
+          placeholder="https://pulse-finance-api-test.workers.dev"
         />
         <div class="preset-strip" style="margin-top: 8px; margin-bottom: 4px;">
-          <button type="button" class="preset-pill" id="fillTestWebhookBtn">🔗 Тестовый Webhook n8n</button>
-          <button type="button" class="preset-pill" id="syncFromApiBtn">🔄 Синхронизировать с n8n</button>
+          <button type="button" class="preset-pill" id="fillTestWebhookBtn">☁️ Cloudflare Worker API</button>
+          <button type="button" class="preset-pill" id="syncFromApiBtn">🔄 Синхронизировать с API</button>
           <button type="button" class="preset-pill" id="clearApiUrlBtn">📴 Офлайн DEMO</button>
         </div>
         <div class="learned-dict-box" id="learnedDictSummary">Выучено магазинов: 0</div>

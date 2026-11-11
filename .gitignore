@@ -1,4 +1,5 @@
 docs/
 CHATGPT_PROJECT_PROMPT.md
+cloudflare-worker/
 .env
 *.local

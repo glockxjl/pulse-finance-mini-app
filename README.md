@@ -6,6 +6,7 @@
 
 - **Основной рабочий проект (единственный исходник):** `C:\Users\Buhalterija\Desktop\PULSE-Finance`
 - **Опубликованная версия (GitHub Pages):** https://glockxjl.github.io/pulse-finance-mini-app/
+- **Облачный API Mini App (Cloudflare Worker + D1):** папка `cloudflare-worker/` (`https://pulse-finance-api-test.workers.dev`)
 - **Репозиторий GitHub Pages:** `https://github.com/glockxjl/pulse-finance-mini-app`
 - **Старая папка (`C:\Users\Buhalterija\project-2030\pulse-finance-mini-app`):** переведена в статус **архивной** (`ARCHIVED_README.md`) и больше не используется для разработки или деплоя.
 

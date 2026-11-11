@@ -36,13 +36,19 @@ const LT_MERCHANT_RULES = [
 ];
 
 const STORAGE_KEY_TX = "finance_mini_app_demo_tx_v2";
+const STORAGE_KEY_LIVE_TX = "finance_mini_app_live_tx_v1";
 const STORAGE_KEY_API = "finance_mini_app_api_url_v1";
 const STORAGE_KEY_SAVINGS = "finance_mini_app_savings_goal_v1";
 const STORAGE_KEY_BILLS = "finance_mini_app_bills_v1";
 const STORAGE_KEY_LIMITS = "finance_mini_app_cat_limits_v1";
 const STORAGE_KEY_PRIVACY = "finance_mini_app_privacy_v1";
 const STORAGE_KEY_LEARNED = "finance_mini_app_learned_merchants_v1";
-const DEFAULT_N8N_TEST_WEBHOOK = "https://glockxjl.app.n8n.cloud/webhook/finance-mini-app-test";
+const DEFAULT_API_URL = "https://pulse-finance-api-test.workers.dev";
+const DEFAULT_N8N_TEST_WEBHOOK = DEFAULT_API_URL;
+
+function hasTelegramAuth() {
+  return Boolean(window.Telegram?.WebApp?.initData && String(window.Telegram.WebApp.initData).trim().length > 0);
+}
 
 function getInitialDemoTransactions() {
   return [
@@ -112,12 +118,12 @@ const state = {
   parsedBankTx: [],
   apiUrl: (() => {
     const saved = localStorage.getItem(STORAGE_KEY_API);
-    if (saved && saved.includes("/webhook-test/finance-mini-app-test")) {
-      localStorage.setItem(STORAGE_KEY_API, DEFAULT_N8N_TEST_WEBHOOK);
-      return DEFAULT_N8N_TEST_WEBHOOK;
+    if (saved && (saved.includes("/webhook-test/finance-mini-app-test") || saved.includes("glockxjl.app.n8n.cloud"))) {
+      localStorage.setItem(STORAGE_KEY_API, DEFAULT_API_URL);
+      return hasTelegramAuth() ? DEFAULT_API_URL : "";
     }
     if (saved !== null) return saved;
-    return window.Telegram?.WebApp?.initData ? DEFAULT_N8N_TEST_WEBHOOK : "";
+    return hasTelegramAuth() ? DEFAULT_API_URL : "";
   })()
 };
 
@@ -232,13 +238,32 @@ function syncSettingsToCloudStorage() {
   }
 }
 
-function loadAllState() {
+function loadActiveModeTransactions() {
+  if (state.apiUrl) {
+    // В режиме LIVE (API) никогда не подставляем демо-операции как реальные данные
+    if (!hasTelegramAuth()) {
+      state.transactions = [];
+      return;
+    }
+    const rawLiveTx = localStorage.getItem(STORAGE_KEY_LIVE_TX);
+    try {
+      state.transactions = rawLiveTx ? JSON.parse(rawLiveTx) : [];
+    } catch {
+      state.transactions = [];
+    }
+    return;
+  }
+
   const rawTx = localStorage.getItem(STORAGE_KEY_TX);
   try {
     state.transactions = rawTx ? JSON.parse(rawTx) : getInitialDemoTransactions();
   } catch {
     state.transactions = getInitialDemoTransactions();
   }
+}
+
+function loadAllState() {
+  loadActiveModeTransactions();
 
   const rawBills = localStorage.getItem(STORAGE_KEY_BILLS);
   try {
@@ -267,6 +292,12 @@ function loadAllState() {
 }
 
 function saveTransactions() {
+  if (state.apiUrl) {
+    if (hasTelegramAuth()) {
+      localStorage.setItem(STORAGE_KEY_LIVE_TX, JSON.stringify(state.transactions));
+    }
+    return;
+  }
   localStorage.setItem(STORAGE_KEY_TX, JSON.stringify(state.transactions));
 }
 
@@ -351,9 +382,9 @@ function normalizeApiTransactions(data) {
     });
 }
 
-// Клиент для связи с тестовым контуром n8n (отправляет только X-Telegram-Init-Data без testBypass)
+// Клиент для связи с облачным API Cloudflare Worker + D1 (отправляет только подписанный X-Telegram-Init-Data)
 async function apiCallN8n(action, payload = {}) {
-  if (!state.apiUrl) return null;
+  if (!state.apiUrl || !hasTelegramAuth()) return null;
   try {
     const initData = window.Telegram?.WebApp?.initData || "";
     const wrappedPayload = action === "create" && !payload.transaction
@@ -616,7 +647,11 @@ function renderHome(periodTx) {
   const recentContainer = document.getElementById("recentTxList");
   const recent = periodTx.slice(0, 7);
   if (recent.length === 0) {
-    recentContainer.innerHTML = `<div class="empty-state">За этот период пока нет операций</div>`;
+    if (state.apiUrl && !hasTelegramAuth()) {
+      recentContainer.innerHTML = `<div class="empty-state">Режим LIVE: реальные данные доступны только при входе через Telegram. Для автономной работы переключи на DEMO.</div>`;
+    } else {
+      recentContainer.innerHTML = `<div class="empty-state">За этот период пока нет операций</div>`;
+    }
     return;
   }
   recentContainer.innerHTML = renderGroupedByDayHTML(recent);
@@ -739,7 +774,11 @@ function renderHistory(periodTx) {
   const listEl = document.getElementById("historyTxList");
 
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="empty-state">Ничего не найдено</div>`;
+    if (state.apiUrl && !hasTelegramAuth()) {
+      listEl.innerHTML = `<div class="empty-state">Режим LIVE: реальные данные доступны только при входе через Telegram. Для автономной работы переключи на DEMO.</div>`;
+    } else {
+      listEl.innerHTML = `<div class="empty-state">Ничего не найдено</div>`;
+    }
     return;
   }
 
@@ -1362,6 +1401,10 @@ function initEvents() {
   const submitSmartQuickInput = async () => {
     const parsed = parseSmartQuickInput(smartInput.value);
     if (!parsed) return;
+    if (state.apiUrl && !hasTelegramAuth()) {
+      showToast("В режиме LIVE нужен вход через Telegram (или включи DEMO)");
+      return;
+    }
     triggerHaptic("medium");
     const newTx = {
       id: "smart-" + Date.now(),
@@ -1464,17 +1507,22 @@ function initEvents() {
   document.getElementById("quickRefreshBtn")?.addEventListener("click", async () => {
     triggerHaptic("light");
     if (state.apiUrl) {
-      showToast("Синхронизация с n8n...");
+      if (!hasTelegramAuth()) {
+        state.transactions = [];
+        renderAll();
+        showToast("Для синхронизации LIVE открой в Telegram (или включи DEMO)");
+        return;
+      }
+      showToast("Синхронизация с API...");
       const res = await apiCallN8n("list");
-      const list = normalizeApiTransactions(res);
-      if (list.length > 0) {
-        state.transactions = list;
+      if (res && res.ok) {
+        state.transactions = normalizeApiTransactions(res);
         saveTransactions();
         renderAll();
-        showToast("Данные обновлены из n8n");
+        showToast("Данные обновлены из облака D1");
       } else {
         renderAll();
-        showToast("Требуется Telegram initData (или включи DEMO)");
+        showToast("Ошибка синхронизации с API");
       }
     } else {
       renderAll();
@@ -1547,6 +1595,12 @@ function initEvents() {
     e.preventDefault();
     const errEl = document.getElementById("formError");
     errEl.classList.add("hidden");
+
+    if (state.apiUrl && !hasTelegramAuth()) {
+      errEl.textContent = "В режиме LIVE нужен вход через Telegram (или переключи на DEMO)";
+      errEl.classList.remove("hidden");
+      return;
+    }
 
     const enteredAmount = Number(document.getElementById("txAmount").value.replace(",", "."));
     const dateVal = document.getElementById("txDate").value;
@@ -1627,6 +1681,10 @@ function initEvents() {
 
   document.getElementById("confirmImportTxBtn").addEventListener("click", async () => {
     if (!state.parsedBankTx.length) return;
+    if (state.apiUrl && !hasTelegramAuth()) {
+      showToast("В режиме LIVE нужен вход через Telegram (или включи DEMO)");
+      return;
+    }
     const existingKeys = new Set(state.transactions.map((t) => t.externalId || `${t.date}|${t.amount}|${t.description}`));
     let added = 0;
     let skipped = 0;
@@ -1774,38 +1832,60 @@ function initEvents() {
 
   document.getElementById("syncFromApiBtn")?.addEventListener("click", async () => {
     triggerHaptic("medium");
-    const candidateUrl = document.getElementById("apiUrlInput").value.trim() || DEFAULT_N8N_TEST_WEBHOOK;
+    const candidateUrl = document.getElementById("apiUrlInput").value.trim() || DEFAULT_API_URL;
     state.apiUrl = candidateUrl;
     localStorage.setItem(STORAGE_KEY_API, state.apiUrl);
     updateModeBadge();
+    if (!hasTelegramAuth()) {
+      state.transactions = [];
+      renderAll();
+      showToast("Для запроса к API открой приложение внутри Telegram");
+      return;
+    }
     const res = await apiCallN8n("list");
-    const list = normalizeApiTransactions(res);
-    if (list.length > 0) {
+    if (res && res.ok) {
+      const list = normalizeApiTransactions(res);
       state.transactions = list;
       saveTransactions();
       renderAll();
       settingsModal.classList.add("hidden");
-      showToast(`Синхронизировано с n8n (${list.length} опер.)`);
+      showToast(`Синхронизировано с API (${list.length} опер.)`);
     } else {
-      showToast("Для запроса к n8n открой приложение внутри Telegram");
+      state.transactions = [];
+      renderAll();
+      showToast("Ошибка синхронизации с API");
     }
   });
 
   document.getElementById("resetDemoDataBtn").addEventListener("click", () => {
     askNativeConfirm("Сбросить демо-операции к начальному состоянию?", () => {
+      state.apiUrl = "";
+      localStorage.setItem(STORAGE_KEY_API, "");
+      document.getElementById("apiUrlInput").value = "";
       state.transactions = getInitialDemoTransactions();
       state.bills = getDefaultMonthlyBills();
       saveTransactions();
       saveBills();
+      updateModeBadge();
       renderAll();
       settingsModal.classList.add("hidden");
     });
   });
-  document.getElementById("saveSettingsBtn").addEventListener("click", () => {
+  document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
     state.apiUrl = document.getElementById("apiUrlInput").value.trim();
     localStorage.setItem(STORAGE_KEY_API, state.apiUrl);
     updateModeBadge();
+    loadActiveModeTransactions();
+    renderAll();
     settingsModal.classList.add("hidden");
+    if (state.apiUrl && hasTelegramAuth()) {
+      const res = await apiCallN8n("list");
+      if (res && res.ok) {
+        state.transactions = normalizeApiTransactions(res);
+        saveTransactions();
+        renderAll();
+      }
+    }
   });
 }
 
@@ -1838,11 +1918,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   initEvents();
   updateModeBadge();
   renderAll();
-  if (state.apiUrl && window.Telegram?.WebApp?.initData) {
+  if (state.apiUrl && hasTelegramAuth()) {
     const res = await apiCallN8n("list");
-    const list = normalizeApiTransactions(res);
-    if (list.length > 0) {
-      state.transactions = list;
+    if (res && res.ok) {
+      state.transactions = normalizeApiTransactions(res);
       saveTransactions();
       renderAll();
     }
