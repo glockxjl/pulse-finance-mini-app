@@ -43,7 +43,7 @@ const STORAGE_KEY_BILLS = "finance_mini_app_bills_v1";
 const STORAGE_KEY_LIMITS = "finance_mini_app_cat_limits_v1";
 const STORAGE_KEY_PRIVACY = "finance_mini_app_privacy_v1";
 const STORAGE_KEY_LEARNED = "finance_mini_app_learned_merchants_v1";
-const DEFAULT_API_URL = "https://pulse-finance-api-test.workers.dev";
+const DEFAULT_API_URL = "https://pulse-api.dragonfantom2007.workers.dev";
 const DEFAULT_N8N_TEST_WEBHOOK = DEFAULT_API_URL;
 
 function hasTelegramAuth() {
