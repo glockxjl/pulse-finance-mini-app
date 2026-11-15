@@ -1252,21 +1252,48 @@ function renderParsedSwedbankPreview() {
 function renderCategoryChips() {
   const container = document.getElementById("categoryChips");
   const list = CATEGORIES[state.formType] || [];
-  if (!list.some((c) => c.name === state.selectedCategory)) {
-    state.selectedCategory = list[0].name;
-  }
+  const isCustom = Boolean(state.selectedCategory && !list.some((c) => c.name === state.selectedCategory));
 
-  container.innerHTML = list
+  const chipsHtml = list
     .map((c) => {
-      const activeClass = c.name === state.selectedCategory ? "selected" : "";
+      const activeClass = !isCustom && c.name === state.selectedCategory ? "selected" : "";
       return `<button type="button" class="cat-chip ${activeClass}" data-cat="${escapeHtml(c.name)}">${c.icon} ${escapeHtml(c.name)}</button>`;
     })
     .join("");
 
+  const customActiveClass = isCustom ? "selected" : "";
+  container.innerHTML = chipsHtml + `<button type="button" class="cat-chip ${customActiveClass}" data-cat="__custom__">✨ Своя...</button>`;
+
+  const customInput = document.getElementById("txCustomCategory");
+  if (customInput) {
+    customInput.classList.toggle("hidden", !isCustom);
+    if (isCustom && state.selectedCategory !== "__custom__") {
+      customInput.value = state.selectedCategory;
+    }
+    if (!customInput.dataset.bound) {
+      customInput.dataset.bound = "1";
+      customInput.addEventListener("input", () => {
+        const val = customInput.value.trim();
+        state.selectedCategory = val || "Своя категория";
+      });
+    }
+  }
+
   container.querySelectorAll(".cat-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       triggerHaptic("light");
-      state.selectedCategory = btn.getAttribute("data-cat");
+      const cat = btn.getAttribute("data-cat");
+      if (cat === "__custom__") {
+        if (customInput) {
+          customInput.classList.remove("hidden");
+          customInput.focus();
+          const currentVal = customInput.value.trim();
+          state.selectedCategory = currentVal || "Своя категория";
+        }
+      } else {
+        state.selectedCategory = cat;
+        if (customInput) customInput.classList.add("hidden");
+      }
       renderCategoryChips();
     });
   });
@@ -1605,6 +1632,14 @@ function initEvents() {
     const enteredAmount = Number(document.getElementById("txAmount").value.replace(",", "."));
     const dateVal = document.getElementById("txDate").value;
     let descVal = document.getElementById("txDescription").value.trim();
+
+    const customInput = document.getElementById("txCustomCategory");
+    if (customInput && !customInput.classList.contains("hidden")) {
+      const customVal = customInput.value.trim();
+      if (customVal) {
+        state.selectedCategory = customVal;
+      }
+    }
 
     if (!Number.isFinite(enteredAmount) || enteredAmount <= 0) {
       errEl.textContent = "Укажи сумму больше нуля";
