@@ -383,8 +383,10 @@ function normalizeApiTransactions(data) {
 }
 
 // Клиент для связи с облачным API Cloudflare Worker + D1 (отправляет только подписанный X-Telegram-Init-Data)
-async function apiCallN8n(action, payload = {}) {
-  if (!state.apiUrl || !hasTelegramAuth()) return null;
+async function apiCallN8n(action, payload = {}, options = {}) {
+  if (!state.apiUrl || !hasTelegramAuth()) {
+    return options.returnError ? { ok: false, error: "Нет подключения к API или отсутствует Telegram initData" } : null;
+  }
   try {
     const initData = window.Telegram?.WebApp?.initData || "";
     const wrappedPayload = action === "create" && !payload.transaction
@@ -402,10 +404,17 @@ async function apiCallN8n(action, payload = {}) {
         payload: wrappedPayload
       })
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (options.returnError) {
+        let errBody = {};
+        try { errBody = await response.json(); } catch {}
+        return { ok: false, status: response.status, error: errBody.error || `HTTP ${response.status}` };
+      }
+      return null;
+    }
     return await response.json();
-  } catch {
-    return null;
+  } catch (err) {
+    return options.returnError ? { ok: false, error: err?.message || "Сетевая ошибка при обращении к серверу" } : null;
   }
 }
 
@@ -1156,14 +1165,16 @@ function parseSwedbankCSV(csvText) {
     const isCredit = dk === "K" || dk === "C";
     const type = isCredit ? "income" : "expense";
     const dateStr = idxDate >= 0 && cols[idxDate] ? cols[idxDate].slice(0, 10) : new Date().toISOString().slice(0, 10);
-    const docNr = idxDoc >= 0 && cols[idxDoc] ? cols[idxDoc] : `${dateStr}-${amount}-${payee}`;
+    const rawDocNr = idxDoc >= 0 && cols[idxDoc] ? String(cols[idxDoc]).trim() : "";
+    const extId = rawDocNr ? "SWED-" + rawDocNr : "";
+    const localId = rawDocNr ? "swed-" + rawDocNr : `swed-noid-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`;
 
     const category = autoDetectLtCategory(payee, details, isCredit);
     const cleanDesc = [payee, details].filter(Boolean).join(" — ").replace(/PIRKIMAS KORTELE\s*\d+\*+\d+\s*/i, "").trim();
 
     parsed.push({
-      id: "swed-" + docNr,
-      externalId: "SWED-" + docNr,
+      id: localId,
+      externalId: extId,
       date: dateStr,
       type,
       amount: Math.round(amount * 100) / 100,
@@ -1720,31 +1731,87 @@ function initEvents() {
       showToast("В режиме LIVE нужен вход через Telegram (или включи DEMO)");
       return;
     }
-    const existingKeys = new Set(state.transactions.map((t) => t.externalId || `${t.date}|${t.amount}|${t.description}`));
-    let added = 0;
-    let skipped = 0;
-    const importedBatch = [];
+
+    const confirmBtn = document.getElementById("confirmImportTxBtn");
+    const msgEl = document.getElementById("bankImportSuccessMsg");
+
+    // Проверяем дубликаты ТОЛЬКО по надёжному банковскому externalId.
+    // Строки без externalId не отбрасываются по дате/сумме/описанию, чтобы две одинаковые покупки сохранились отдельно.
+    const existingExtIds = new Set(
+      state.transactions
+        .map((t) => (typeof t.externalId === "string" ? t.externalId.trim() : ""))
+        .filter(Boolean)
+    );
+    let skippedLocal = 0;
+    const candidateBatch = [];
     for (const item of state.parsedBankTx) {
-      const key = item.externalId || `${item.date}|${item.amount}|${item.description}`;
-      if (existingKeys.has(key)) {
-        skipped++;
-        continue;
+      const extId = typeof item.externalId === "string" ? item.externalId.trim() : "";
+      if (extId) {
+        if (existingExtIds.has(extId)) {
+          skippedLocal++;
+          continue;
+        }
+        existingExtIds.add(extId);
       }
-      existingKeys.add(key);
+      candidateBatch.push({ ...item });
+    }
+
+    if (candidateBatch.length === 0) {
+      msgEl.style.color = "";
+      msgEl.textContent = `Новых операций нет (пропущено дубликатов: ${skippedLocal})`;
+      msgEl.classList.remove("hidden");
+      setTimeout(() => msgEl.classList.add("hidden"), 4000);
+      return;
+    }
+
+    if (state.apiUrl) {
+      confirmBtn.disabled = true;
+      try {
+        const res = await apiCallN8n("bulk_import", { items: candidateBatch }, { returnError: true });
+        if (!res || !res.ok) {
+          msgEl.style.color = "#dc2626";
+          msgEl.textContent = `Ошибка импорта: ${res?.error || "сервер недоступен"}`;
+          msgEl.classList.remove("hidden");
+          showToast("Не удалось импортировать выписку. Данные не изменены.");
+          return;
+        }
+
+        const listRes = await apiCallN8n("list");
+        if (listRes) {
+          state.transactions = normalizeApiTransactions(listRes);
+          saveTransactions();
+          renderAll();
+        }
+
+        triggerHaptic("medium");
+        const serverInserted = Number(res.insertedCount || 0);
+        const totalSkipped = skippedLocal + Number(res.skippedDuplicatesCount || 0);
+        const noIdCount = Number(res.withoutExternalIdCount || 0);
+        let statusText = `Импортировано: ${serverInserted} (пропущено дубликатов: ${totalSkipped})`;
+        if (noIdCount > 0) {
+          statusText += ` · Без банковского ID: ${noIdCount} (без защиты от дублей)`;
+        }
+        msgEl.style.color = "";
+        msgEl.textContent = statusText;
+        msgEl.classList.remove("hidden");
+        setTimeout(() => msgEl.classList.add("hidden"), 5000);
+      } finally {
+        confirmBtn.disabled = false;
+      }
+      return;
+    }
+
+    // DEMO режим (без сервера)
+    for (const item of candidateBatch) {
       state.transactions.push({ ...item });
-      importedBatch.push({ ...item });
-      added++;
     }
     triggerHaptic("medium");
     saveTransactions();
     renderAll();
-    const msgEl = document.getElementById("bankImportSuccessMsg");
-    msgEl.textContent = `Импортировано: ${added} (пропущено дубликатов: ${skipped})`;
+    msgEl.style.color = "";
+    msgEl.textContent = `Импортировано (DEMO): ${candidateBatch.length} (пропущено дубликатов: ${skippedLocal})`;
     msgEl.classList.remove("hidden");
     setTimeout(() => msgEl.classList.add("hidden"), 3000);
-    if (importedBatch.length > 0) {
-      await apiCallN8n("bulk_import", { items: importedBatch });
-    }
   });
 
   document.getElementById("copyBankReportBtn").addEventListener("click", () => {

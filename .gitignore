@@ -1,5 +1,14 @@
 docs/
 CHATGPT_PROJECT_PROMPT.md
-cloudflare-worker/
-.env
+cloudflare-worker/seed.sql
+cloudflare-worker/wrangler.toml
+cloudflare-worker/.wrangler/
+cloudflare-worker/.dev.vars*
+cloudflare-worker/node_modules/
+*.sqlite
+*.sqlite3
+.env*
 *.local
+backups/
+*.backup
+*.sql.bak

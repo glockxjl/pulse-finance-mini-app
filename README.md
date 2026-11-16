@@ -1,12 +1,15 @@
 # PULSE — Telegram Mini App & Finance Bot
 
-Персональное приложение для учёта личных финансов в евро (€) внутри Telegram (Mini App + Telegram Bot на базе n8n Cloud).
+Персональное приложение для учёта личных финансов в евро (€) внутри Telegram (Mini App на базе Cloudflare Workers + D1).
+
+> [!IMPORTANT]
+> Полный актуальный паспорт архитектуры зафиксирован в документе [`ARCHITECTURE.md`](file:///C:/Users/Buhalterija/Desktop/PULSE-Finance/ARCHITECTURE.md).
 
 ## Единый источник кода и публикация
 
 - **Основной рабочий проект (единственный исходник):** `C:\Users\Buhalterija\Desktop\PULSE-Finance`
 - **Опубликованная версия (GitHub Pages):** https://glockxjl.github.io/pulse-finance-mini-app/
-- **Облачный API Mini App (Cloudflare Worker + D1):** папка `cloudflare-worker/` (`https://pulse-finance-api-test.workers.dev`)
+- **Облачный API Mini App (Cloudflare Worker + D1):** папка `cloudflare-worker/` (`https://pulse-api.dragonfantom2007.workers.dev`)
 - **Репозиторий GitHub Pages:** `https://github.com/glockxjl/pulse-finance-mini-app`
 - **Старая папка (`C:\Users\Buhalterija\project-2030\pulse-finance-mini-app`):** переведена в статус **архивной** (`ARCHIVED_README.md`) и больше не используется для разработки или деплоя.
 
@@ -14,12 +17,14 @@
 
 ```text
 PULSE-Finance/
+├── ARCHITECTURE.md             # Актуальный паспорт системы и работающей архитектуры
 ├── index.html                  # Интерфейс Telegram Mini App (Обзор, Операции, Аналитика, Настройки)
 ├── styles.css                  # Стили Светлое Бенто, темы Telegram WebApp и мобильная адаптация
-├── app.js                      # Логика, словарь магазинов Литвы, демо-режим и защищённый клиент n8n API
+├── app.js                      # Клиентская логика, словарь магазинов Литвы, демо-режим и API-клиент
 ├── CHATGPT_PROJECT_PROMPT.md   # Готовый промпт и паспорт проекта для ChatGPT Plus Projects
 ├── README.md                   # Это описание
-└── docs/                       # Архив документации и технического плана
+├── cloudflare-worker/          # Исходный код Worker (src/index.js), конфигурация D1 и миграции
+└── docs/                       # Архив исторической документации и технического плана (n8n)
     ├── CHATGPT_CONTEXT.md      # Личный контекст и предпочтения
     ├── PROJECT_FINANCE.md      # Аудит n8n, правила безопасности и история разработки
     ├── PLAN.md                 # Технический план, формулы, перенесённые функции и задачи API
@@ -45,10 +50,14 @@ PULSE-Finance/
    - Авторизация только через подписанный заголовок `X-Telegram-Init-Data` (`Telegram.WebApp.initData`) без тестовых обходов проверки подписи, без открытых ключей и без передачи неподписанного идентификатора пользователя.
    - Нормализация различных форматов ответа n8n (`transactions`, `rows`, `data`, запятые в дробных суммах, ISO-даты).
 
-## Что зависит от будущего API (отложено до настройки backend)
+## Статус серверного API и интеграций
 
-- **Прямой приём вебхуков из iOS Shortcuts (Apple Pay):** отложен до добавления отдельного способа авторизации для Shortcuts на стороне n8n (чтобы не включать небезопасный обход проверки подписи). В приложении сохранён шаблон настройки и локальная демо-симуляция (`Тест €16.40`).
-- **Перевод боевого n8n API в продакшен:** проверка HMAC-SHA256 подписи `Telegram.WebApp.initData` через токен бота на активном Production Webhook и подключение кнопки меню в `@BotFather`.
+- **Серверный бэкенд:** полностью переведён на Cloudflare Workers + D1 (`pulse-api.dragonfantom2007.workers.dev`).
+- **Авторизация Mini App:** валидация HMAC-SHA256 подписи `Telegram.WebApp.initData` и проверка `userId === 1604405483`.
+- **Индикатор LIVE:** зависит исключительно от выбранного URL API (`state.apiUrl`) и не подтверждает наличие сетевой связи или валидность `initData`.
+- **Прямой приём оплат из iOS Shortcuts (Apple Pay):** серверный маршрут `POST /api/shortcut` реализован в Worker (с ключом `X-Shortcut-Key`, дедупликацией и записью в `transactions`), однако клиентская автоматика iPhone Shortcut в iOS на данный момент **отложена**, и сквозной сценарий не принят.
+- **Кнопка меню в боте:** настроена через `@BotFather` (`/setmenubutton`) на адрес GitHub Pages.
+- **Подробный паспорт архитектуры:** см. [`ARCHITECTURE.md`](file:///C:/Users/Buhalterija/Desktop/PULSE-Finance/ARCHITECTURE.md).
 
 ## Как запустить локально
 
