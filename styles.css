@@ -158,6 +158,27 @@ body.privacy-masked .sensitive-num {
   background: var(--emerald);
 }
 
+.pulse-dot.error {
+  background: var(--coral);
+}
+
+.sync-notice-bar {
+  background: #fffbeb;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #92400e;
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  margin-bottom: 11px;
+}
+
+.sync-notice-bar.error {
+  background: #fff1f2;
+  border-color: rgba(244, 63, 94, 0.35);
+  color: #9f1239;
+}
+
 .custom-dates-drawer {
   display: flex;
   align-items: center;
@@ -308,6 +329,14 @@ body.privacy-masked .sensitive-num {
 
 .v-val.neg {
   color: #fda4af;
+}
+
+.vault-alltime-note {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.52);
 }
 
 /* ЖИВАЯ СТРОКА ИНСАЙТА */

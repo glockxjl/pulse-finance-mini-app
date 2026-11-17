@@ -63,12 +63,41 @@ function getInitialDemoTransactions() {
   ];
 }
 
+function getCurrentYearMonth(nowDate = new Date()) {
+  const y = nowDate.getFullYear();
+  const m = String(nowDate.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+function getTodayIsoLocal(nowDate = new Date()) {
+  const y = nowDate.getFullYear();
+  const m = String(nowDate.getMonth() + 1).padStart(2, "0");
+  const d = String(nowDate.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function isBillPaidForMonth(bill, yearMonth = getCurrentYearMonth()) {
+  return Boolean(bill && bill.paid === true && bill.paidMonth === yearMonth);
+}
+
+function normalizeBillsForMonth(bills, yearMonth = getCurrentYearMonth()) {
+  if (!Array.isArray(bills)) return getDefaultMonthlyBills();
+  return bills.map((b) => {
+    const paidThisMonth = Boolean(b && b.paid === true && b.paidMonth === yearMonth);
+    return {
+      ...b,
+      paid: paidThisMonth,
+      paidMonth: paidThisMonth ? yearMonth : null
+    };
+  });
+}
+
 function getDefaultMonthlyBills() {
   return [
-    { id: "bill-1", name: "Аренда жилья (моя доля)", amount: 320.0, day: "1 число", paid: true },
-    { id: "bill-2", name: "Интернет и связь Telia", amount: 19.9, day: "4 число", paid: true },
-    { id: "bill-3", name: "Коммунальные Ignitis", amount: 44.5, day: "15 число", paid: false },
-    { id: "bill-4", name: "Apple / Spotify подписки", amount: 9.99, day: "20 число", paid: false }
+    { id: "bill-1", name: "Аренда жилья (моя доля)", amount: 320.0, day: "1 число", paid: false, paidMonth: null },
+    { id: "bill-2", name: "Интернет и связь Telia", amount: 19.9, day: "4 число", paid: false, paidMonth: null },
+    { id: "bill-3", name: "Коммунальные Ignitis", amount: 44.5, day: "15 число", paid: false, paidMonth: null },
+    { id: "bill-4", name: "Apple / Spotify подписки", amount: 9.99, day: "20 число", paid: false, paidMonth: null }
   ];
 }
 
@@ -116,6 +145,16 @@ const state = {
   privacyMasked: localStorage.getItem(STORAGE_KEY_PRIVACY) === "1",
   savingsGoal: Number(localStorage.getItem(STORAGE_KEY_SAVINGS) ?? 200),
   parsedBankTx: [],
+  syncState: "demo",
+  lastSyncAt: null,
+  lastSyncError: "",
+  showingCachedCopy: false,
+  mutationInFlight: false,
+  pendingFormExternalId: null,
+  pendingSmartExternalId: null,
+  pendingSmartInputKey: "",
+  pendingDupExternalId: null,
+  pendingRefundExternalId: null,
   apiUrl: (() => {
     const saved = localStorage.getItem(STORAGE_KEY_API);
     if (saved && (saved.includes("/webhook-test/finance-mini-app-test") || saved.includes("glockxjl.app.n8n.cloud"))) {
@@ -243,6 +282,8 @@ function loadActiveModeTransactions() {
     // В режиме LIVE (API) никогда не подставляем демо-операции как реальные данные
     if (!hasTelegramAuth()) {
       state.transactions = [];
+      state.showingCachedCopy = false;
+      state.syncState = "auth_required";
       return;
     }
     const rawLiveTx = localStorage.getItem(STORAGE_KEY_LIVE_TX);
@@ -251,9 +292,13 @@ function loadActiveModeTransactions() {
     } catch {
       state.transactions = [];
     }
+    state.showingCachedCopy = state.transactions.length > 0;
+    state.syncState = "connecting";
     return;
   }
 
+  state.showingCachedCopy = false;
+  state.syncState = "demo";
   const rawTx = localStorage.getItem(STORAGE_KEY_TX);
   try {
     state.transactions = rawTx ? JSON.parse(rawTx) : getInitialDemoTransactions();
@@ -266,8 +311,10 @@ function loadAllState() {
   loadActiveModeTransactions();
 
   const rawBills = localStorage.getItem(STORAGE_KEY_BILLS);
+  const currentYm = getCurrentYearMonth();
   try {
-    state.bills = rawBills ? JSON.parse(rawBills) : getDefaultMonthlyBills();
+    const parsedBills = rawBills ? JSON.parse(rawBills) : getDefaultMonthlyBills();
+    state.bills = normalizeBillsForMonth(parsedBills, currentYm);
   } catch {
     state.bills = getDefaultMonthlyBills();
   }
@@ -341,7 +388,7 @@ function showToast(message) {
   }, 2600);
 }
 
-// Нормализация массива транзакций из любого формата ответа n8n
+// Нормализация массива транзакций из любого формата ответа API
 function normalizeApiTransactions(data) {
   if (!data) return [];
   let rawList = [];
@@ -368,7 +415,7 @@ function normalizeApiTransactions(data) {
       const txType = String(r.type || "expense").toLowerCase() === "income" ? "income" : "expense";
       const rawCat = String(r.category || "").trim();
       const cat = rawCat === "Разное" || rawCat === "Другое" ? "Прочее" : (rawCat || "Прочее");
-      const dateStr = String(r.date || r.createdAt || new Date().toISOString()).slice(0, 10);
+      const dateStr = String(r.date || r.createdAt || getTodayIsoLocal()).slice(0, 10);
       const extId = String(r.externalId || r.id || `api-${dateStr}-${idx}`);
       return {
         id: String(r.id || extId),
@@ -382,14 +429,58 @@ function normalizeApiTransactions(data) {
     });
 }
 
+function formatSyncTime(dateObj = new Date()) {
+  const hh = String(dateObj.getHours()).padStart(2, "0");
+  const mm = String(dateObj.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function markSyncConnecting() {
+  if (!state.apiUrl) {
+    state.syncState = "demo";
+  } else if (!hasTelegramAuth()) {
+    state.syncState = "auth_required";
+  } else {
+    state.syncState = "connecting";
+  }
+  updateModeBadge();
+}
+
+function markSyncSuccess() {
+  state.syncState = "synced";
+  state.lastSyncAt = formatSyncTime(new Date());
+  state.lastSyncError = "";
+  state.showingCachedCopy = false;
+  updateModeBadge();
+}
+
+function markSyncFailure(errorMsg = "") {
+  if (!state.apiUrl) {
+    state.syncState = "demo";
+    state.showingCachedCopy = false;
+  } else if (!hasTelegramAuth()) {
+    state.syncState = "auth_required";
+    state.showingCachedCopy = false;
+  } else {
+    state.syncState = "offline_cache";
+    state.showingCachedCopy = state.transactions.length > 0;
+  }
+  state.lastSyncError = String(errorMsg || "");
+  updateModeBadge();
+}
+
 // Клиент для связи с облачным API Cloudflare Worker + D1 (отправляет только подписанный X-Telegram-Init-Data)
 async function apiCallN8n(action, payload = {}, options = {}) {
-  if (!state.apiUrl || !hasTelegramAuth()) {
-    return options.returnError ? { ok: false, error: "Нет подключения к API или отсутствует Telegram initData" } : null;
+  if (!state.apiUrl) {
+    return options.returnError ? { ok: false, error: "Включён режим DEMO" } : null;
+  }
+  if (!hasTelegramAuth()) {
+    markSyncFailure("Нужен вход через Telegram");
+    return options.returnError ? { ok: false, error: "Нужен вход через Telegram" } : null;
   }
   try {
     const initData = window.Telegram?.WebApp?.initData || "";
-    const wrappedPayload = action === "create" && !payload.transaction
+    const wrappedPayload = (action === "create" || action === "update") && !payload.transaction
       ? { transaction: payload, ...payload }
       : payload;
     const response = await fetch(state.apiUrl, {
@@ -404,18 +495,174 @@ async function apiCallN8n(action, payload = {}, options = {}) {
         payload: wrappedPayload
       })
     });
-    if (!response.ok) {
+    let jsonBody = null;
+    try {
+      jsonBody = await response.json();
+    } catch {
+      jsonBody = null;
+    }
+    if (!response.ok || !jsonBody || jsonBody.ok === false) {
+      const errText = jsonBody?.error || `Ошибка сервера (HTTP ${response.status})`;
       if (options.returnError) {
-        let errBody = {};
-        try { errBody = await response.json(); } catch {}
-        return { ok: false, status: response.status, error: errBody.error || `HTTP ${response.status}` };
+        return { ok: false, status: response.status, error: errText };
       }
       return null;
     }
-    return await response.json();
+    return jsonBody;
   } catch (err) {
-    return options.returnError ? { ok: false, error: err?.message || "Сетевая ошибка при обращении к серверу" } : null;
+    return options.returnError ? { ok: false, error: err?.message || "Нет связи с сервером" } : null;
   }
+}
+
+async function syncTransactionsFromServer() {
+  if (!state.apiUrl) {
+    state.syncState = "demo";
+    updateModeBadge();
+    return { ok: true, mode: "demo" };
+  }
+  if (!hasTelegramAuth()) {
+    state.transactions = [];
+    markSyncFailure("Нужен вход через Telegram");
+    renderAll();
+    return { ok: false, error: "Нужен вход через Telegram" };
+  }
+  markSyncConnecting();
+  const res = await apiCallN8n("list", {}, { returnError: true });
+  if (res && res.ok) {
+    state.transactions = normalizeApiTransactions(res);
+    saveTransactions();
+    markSyncSuccess();
+    renderAll();
+    return { ok: true, count: state.transactions.length };
+  }
+  markSyncFailure(res?.error || "Нет связи с сервером");
+  renderAll();
+  return { ok: false, error: res?.error || "Нет связи с сервером" };
+}
+
+function generateAttemptExternalId(prefix = "APP") {
+  const rand = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().slice(0, 8)
+    : Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${Date.now()}-${rand}`;
+}
+
+async function executeServerCreate(txData) {
+  if (!state.apiUrl) {
+    const demoTx = {
+      ...txData,
+      id: txData.id || `demo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      externalId: txData.externalId || generateAttemptExternalId("DEMO")
+    };
+    state.transactions.unshift(demoTx);
+    saveTransactions();
+    renderAll();
+    return { ok: true, mode: "demo", item: demoTx };
+  }
+
+  if (!hasTelegramAuth()) {
+    markSyncFailure("Нужен вход через Telegram");
+    return { ok: false, error: "В режиме LIVE нужен вход через Telegram (или переключи на DEMO)" };
+  }
+
+  const res = await apiCallN8n("create", txData, { returnError: true });
+  if (!res || !res.ok) {
+    markSyncFailure(res?.error);
+    return { ok: false, error: res?.error || "Нет связи с сервером — операция не сохранена в D1" };
+  }
+
+  const listRes = await apiCallN8n("list", {}, { returnError: true });
+  if (listRes && listRes.ok) {
+    state.transactions = normalizeApiTransactions(listRes);
+  } else if (res.item) {
+    const norm = normalizeApiTransactions([res.item])[0];
+    if (norm) {
+      state.transactions = [
+        norm,
+        ...state.transactions.filter((t) => t.externalId !== norm.externalId && String(t.id) !== String(norm.id))
+      ];
+    }
+  }
+  saveTransactions();
+  markSyncSuccess();
+  renderAll();
+  return { ok: true, mode: "live", item: res.item, deduplicated: Boolean(res.deduplicated) };
+}
+
+async function executeServerUpdate(txData) {
+  if (!state.apiUrl) {
+    const idx = state.transactions.findIndex((t) => String(t.id) === String(txData.id));
+    if (idx < 0) return { ok: false, error: "Операция не найдена" };
+    state.transactions[idx] = { ...state.transactions[idx], ...txData };
+    saveTransactions();
+    renderAll();
+    return { ok: true, mode: "demo", item: state.transactions[idx] };
+  }
+
+  if (!hasTelegramAuth()) {
+    markSyncFailure("Нужен вход через Telegram");
+    return { ok: false, error: "В режиме LIVE нужен вход через Telegram (или переключи на DEMO)" };
+  }
+
+  const res = await apiCallN8n("update", txData, { returnError: true });
+  if (!res || !res.ok) {
+    markSyncFailure(res?.error);
+    return { ok: false, error: res?.error || "Не удалось сохранить изменения в D1" };
+  }
+
+  const listRes = await apiCallN8n("list", {}, { returnError: true });
+  if (listRes && listRes.ok) {
+    state.transactions = normalizeApiTransactions(listRes);
+  } else if (res.item) {
+    const norm = normalizeApiTransactions([res.item])[0];
+    if (norm) {
+      state.transactions = state.transactions.map((t) =>
+        String(t.id) === String(norm.id) || (norm.externalId && t.externalId === norm.externalId) ? norm : t
+      );
+    }
+  }
+  saveTransactions();
+  markSyncSuccess();
+  renderAll();
+  return { ok: true, mode: "live", item: res.item };
+}
+
+async function executeServerDelete(targetId) {
+  const tx = state.transactions.find(
+    (t) => String(t.id) === String(targetId) || (t.externalId && t.externalId === String(targetId))
+  );
+  if (!tx) {
+    return { ok: false, error: "Операция уже отсутствует в списке" };
+  }
+
+  if (!state.apiUrl) {
+    state.transactions = state.transactions.filter((t) => t !== tx);
+    saveTransactions();
+    renderAll();
+    return { ok: true, mode: "demo" };
+  }
+
+  if (!hasTelegramAuth()) {
+    markSyncFailure("Нужен вход через Telegram");
+    return { ok: false, error: "В режиме LIVE нужен вход через Telegram" };
+  }
+
+  const res = await apiCallN8n("delete", { id: tx.id, externalId: tx.externalId }, { returnError: true });
+  if (!res || !res.ok) {
+    markSyncFailure(res?.error);
+    return { ok: false, error: res?.error || "Сервер не подтвердил удаление операции" };
+  }
+
+  const listRes = await apiCallN8n("list", {}, { returnError: true });
+  if (listRes && listRes.ok) {
+    state.transactions = normalizeApiTransactions(listRes);
+  } else {
+    state.transactions = state.transactions.filter((t) => t !== tx);
+  }
+  saveTransactions();
+  markSyncSuccess();
+  renderAll();
+  return { ok: true, mode: "live" };
 }
 
 function formatEUR(value) {
@@ -535,27 +782,128 @@ function parseSmartQuickInput(rawText) {
   };
 }
 
-function filterByPeriod(transactions) {
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+const MONTH_NAMES_NOM = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+];
+
+function getMonthTitleRu(nowDate = new Date()) {
+  return `${MONTH_NAMES_NOM[nowDate.getMonth()]} ${nowDate.getFullYear()}`;
+}
+
+function filterByPeriod(transactions, period = state.period, customFrom = state.customFrom, customTo = state.customTo, nowDate = new Date()) {
+  const todayStr = getTodayIsoLocal(nowDate);
+  const currentYm = getCurrentYearMonth(nowDate);
 
   return transactions.filter((tx) => {
     const txDateStr = String(tx.date).slice(0, 10);
-    if (state.period === "all") return true;
-    if (state.period === "month") return txDateStr.slice(0, 7) === todayStr.slice(0, 7);
-    if (state.period === "week") {
+    if (period === "all") return true;
+    if (period === "month") return txDateStr.slice(0, 7) === currentYm;
+    if (period === "week") {
       const txTime = new Date(txDateStr + "T00:00:00").getTime();
       const nowTime = new Date(todayStr + "T00:00:00").getTime();
       const diffDays = (nowTime - txTime) / (1000 * 60 * 60 * 24);
       return diffDays >= 0 && diffDays <= 7;
     }
-    if (state.period === "custom") {
-      if (state.customFrom && txDateStr < state.customFrom) return false;
-      if (state.customTo && txDateStr > state.customTo) return false;
+    if (period === "custom") {
+      if (customFrom && txDateStr < customFrom) return false;
+      if (customTo && txDateStr > customTo) return false;
       return true;
     }
     return true;
   });
+}
+
+function computeFinancialMetrics(
+  allTransactions,
+  bills,
+  savingsGoal,
+  period = state.period,
+  customFrom = state.customFrom,
+  customTo = state.customTo,
+  nowDate = new Date()
+) {
+  const currentYm = getCurrentYearMonth(nowDate);
+  const daysInMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate();
+  const remainingDays = Math.max(1, daysInMonth - nowDate.getDate() + 1);
+
+  let allIncome = 0;
+  let allExpense = 0;
+  let monthIncome = 0;
+  let monthExpense = 0;
+  let allSharedExpense = 0;
+  let allPartnerRefunds = 0;
+
+  for (const tx of allTransactions) {
+    const amt = Number(tx.amount) || 0;
+    const isInc = tx.type === "income";
+    if (isInc) {
+      allIncome += amt;
+      if (tx.category === "Возврат средств") allPartnerRefunds += amt;
+    } else {
+      allExpense += amt;
+      if (tx.category === "Совместные расходы") allSharedExpense += amt;
+    }
+    if (String(tx.date).slice(0, 7) === currentYm) {
+      if (isInc) monthIncome += amt;
+      else monthExpense += amt;
+    }
+  }
+
+  const periodTx = sortByDateDesc(filterByPeriod(allTransactions, period, customFrom, customTo, nowDate));
+  let periodIncome = 0;
+  let periodExpense = 0;
+  for (const tx of periodTx) {
+    const amt = Number(tx.amount) || 0;
+    if (tx.type === "income") periodIncome += amt;
+    else periodExpense += amt;
+  }
+
+  const unpaidBillsTotal = Math.round(
+    (bills || [])
+      .filter((b) => !isBillPaidForMonth(b, currentYm))
+      .reduce((acc, b) => acc + Number(b.amount || 0), 0) * 100
+  ) / 100;
+  const paidBillsCount = (bills || []).filter((b) => isBillPaidForMonth(b, currentYm)).length;
+
+  const allNet = Math.round((allIncome - allExpense) * 100) / 100;
+  const periodNet = Math.round((periodIncome - periodExpense) * 100) / 100;
+  const monthNet = Math.round((monthIncome - monthExpense) * 100) / 100;
+  const goal = Math.max(0, Number(savingsGoal || 0));
+
+  // Формула дневного лимита строго привязана к текущему календарному месяцу (не зависит от фильтра истории!)
+  const freeAfterSavingsAndBills = Math.round((monthNet - goal - unpaidBillsTotal) * 100) / 100;
+  const dailySafe = freeAfterSavingsAndBills > 0
+    ? Math.round((freeAfterSavingsAndBills / remainingDays) * 100) / 100
+    : 0;
+
+  const partnerOwes = Math.max(0, Math.round((allSharedExpense - allPartnerRefunds) * 100) / 100);
+
+  return {
+    currentYm,
+    monthTitle: getMonthTitleRu(nowDate),
+    daysInMonth,
+    remainingDays,
+    periodTx,
+    periodIncome: Math.round(periodIncome * 100) / 100,
+    periodExpense: Math.round(periodExpense * 100) / 100,
+    periodNet,
+    allIncome: Math.round(allIncome * 100) / 100,
+    allExpense: Math.round(allExpense * 100) / 100,
+    allNet,
+    allCount: allTransactions.length,
+    monthIncome: Math.round(monthIncome * 100) / 100,
+    monthExpense: Math.round(monthExpense * 100) / 100,
+    monthNet,
+    goal,
+    unpaidBillsTotal,
+    paidBillsCount,
+    freeAfterSavingsAndBills,
+    dailySafe,
+    sharedExpense: Math.round(allSharedExpense * 100) / 100,
+    partnerRefunds: Math.round(allPartnerRefunds * 100) / 100,
+    partnerOwes
+  };
 }
 
 function sortByDateDesc(list) {
@@ -563,103 +911,131 @@ function sortByDateDesc(list) {
 }
 
 function renderAll() {
-  const periodTx = sortByDateDesc(filterByPeriod(state.transactions));
-  renderHeaderPeriodLabel();
-  renderHome(periodTx);
-  renderHistory(periodTx);
-  renderAnalytics(periodTx);
+  const metrics = computeFinancialMetrics(state.transactions, state.bills, state.savingsGoal, state.period, state.customFrom, state.customTo);
+  renderHeaderPeriodLabel(metrics);
+  renderHome(metrics);
+  renderHistory(metrics.periodTx);
+  renderAnalytics(metrics.periodTx);
 }
 
-function renderHeaderPeriodLabel() {
+function renderHeaderPeriodLabel(metrics) {
   const labelEl = document.getElementById("currentPeriodLabel");
+  if (!labelEl) return;
+  const monthTitle = metrics?.monthTitle || getMonthTitleRu();
+  let customText = "Произвольный период • EUR";
+  if (state.customFrom || state.customTo) {
+    customText = `${state.customFrom || "…"} → ${state.customTo || "…"} • EUR`;
+  }
   const labels = {
-    week: "Последние 7 дней",
-    month: "Ноябрь 2026 • EUR",
-    all: "За всё время",
-    custom: "Произвольный период"
+    week: "Последние 7 дней • EUR",
+    month: `${monthTitle} • EUR`,
+    all: "Все учтённые операции • EUR",
+    custom: customText
   };
-  labelEl.textContent = labels[state.period] || "Ноябрь 2026";
+  labelEl.textContent = labels[state.period] || `${monthTitle} • EUR`;
 }
 
-function renderHome(periodTx) {
-  let totalIncome = 0;
-  let totalExpense = 0;
-  let sharedExpense = 0;
-  let partnerRefunds = 0;
+function renderHome(metrics) {
+  const {
+    monthTitle,
+    remainingDays,
+    periodTx,
+    periodIncome,
+    periodExpense,
+    periodNet,
+    allIncome,
+    allExpense,
+    allNet,
+    allCount,
+    monthIncome,
+    monthExpense,
+    goal,
+    unpaidBillsTotal,
+    paidBillsCount,
+    freeAfterSavingsAndBills,
+    dailySafe,
+    sharedExpense,
+    partnerOwes
+  } = metrics;
 
-  for (const tx of periodTx) {
-    const amt = Number(tx.amount) || 0;
-    if (tx.type === "income") {
-      totalIncome += amt;
-      if (tx.category === "Возврат средств") partnerRefunds += amt;
-    } else {
-      totalExpense += amt;
-      if (tx.category === "Совместные расходы") sharedExpense += amt;
-    }
-  }
-
-  // Считаем неоплаченные обязательные счета месяца
-  const unpaidBillsTotal = state.bills.filter((b) => !b.paid).reduce((acc, b) => acc + Number(b.amount || 0), 0);
-  const paidBillsCount = state.bills.filter((b) => b.paid).length;
-
-  const netBalance = totalIncome - totalExpense;
-  const freeAfterSavingsAndBills = netBalance - state.savingsGoal - unpaidBillsTotal;
-
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const remainingDays = Math.max(1, daysInMonth - now.getDate() + 1);
-  const dailySafe = Math.max(0, freeAfterSavingsAndBills / remainingDays);
-
-  // Оценка финансового пульса (Health Score 0..100)
-  const savingsRate = totalIncome > 0 ? (netBalance / totalIncome) * 100 : 50;
+  // Оценка финансового пульса по текущему месяцу (Health Score 0..100)
+  const savingsRate = monthIncome > 0 ? ((monthIncome - monthExpense) / monthIncome) * 100 : 50;
   const pulseScore = Math.min(99, Math.max(40, Math.round(50 + savingsRate * 0.7)));
   document.getElementById("healthScoreBadge").textContent = `${pulseScore} PULSE`;
 
-  // Главная цифра: Безопасный бюджет на сегодня
+  // Главная цифра: Оценка дневного лимита строго по текущему календарному месяцу
   document.getElementById("dailySafeHero").textContent = formatEUR(dailySafe);
-  document.getElementById("dailySafeSubtext").textContent =
-    freeAfterSavingsAndBills >= 0
-      ? `свободно €${freeAfterSavingsAndBills.toFixed(0)} на ${remainingDays} дн. (резерв счетов: €${unpaidBillsTotal.toFixed(0)})`
-      : `дефицит плана €${Math.abs(freeAfterSavingsAndBills).toFixed(0)} (с учётом копилки и счетов)`;
+  const formulaBreakdown = `доход мес. €${monthIncome.toFixed(0)} − расход €${monthExpense.toFixed(0)} − копилка €${goal.toFixed(0)} − счета €${unpaidBillsTotal.toFixed(0)}`;
+  if (monthIncome === 0 && monthExpense === 0) {
+    document.getElementById("dailySafeSubtext").textContent =
+      `Оценка (${monthTitle}): за текущий месяц пока нет записей (${formulaBreakdown})`;
+  } else if (freeAfterSavingsAndBills > 0) {
+    document.getElementById("dailySafeSubtext").textContent =
+      `Оценка (${monthTitle}): €${freeAfterSavingsAndBills.toFixed(0)} ÷ ${remainingDays} дн. (${formulaBreakdown})`;
+  } else {
+    document.getElementById("dailySafeSubtext").textContent =
+      `Оценка (${monthTitle}): свободный остаток €0, дефицит плана €${Math.abs(freeAfterSavingsAndBills).toFixed(0)} (${formulaBreakdown})`;
+  }
 
-  document.getElementById("summaryBalance").textContent = (netBalance >= 0 ? "" : "−") + formatEUR(Math.abs(netBalance));
-  document.getElementById("summaryIncome").textContent = "+" + formatEUR(totalIncome);
-  document.getElementById("summaryExpense").textContent = "−" + formatEUR(totalExpense);
+  // Разделение итога за выбранный период и общего итога по всем учтённым операциям
+  const periodLabels = {
+    week: { bal: "Итог за 7 дн. (Д−Р)", inc: "Доходы (7 дн.)", exp: "Расходы (7 дн.)" },
+    month: { bal: "Итог месяца (Д−Р)", inc: "Доходы (мес.)", exp: "Расходы (мес.)" },
+    all: { bal: "Итог всех записей", inc: "Доходы (все)", exp: "Расходы (все)" },
+    custom: { bal: "Итог периода (Д−Р)", inc: "Доходы (пер.)", exp: "Расходы (пер.)" }
+  };
+  const pLbl = periodLabels[state.period] || periodLabels.month;
+  const balLblEl = document.getElementById("summaryBalanceLabel");
+  const incLblEl = document.getElementById("summaryIncomeLabel");
+  const expLblEl = document.getElementById("summaryExpenseLabel");
+  if (balLblEl) balLblEl.textContent = pLbl.bal;
+  if (incLblEl) incLblEl.textContent = pLbl.inc;
+  if (expLblEl) expLblEl.textContent = pLbl.exp;
+
+  document.getElementById("summaryBalance").textContent = (periodNet >= 0 ? "" : "−") + formatEUR(Math.abs(periodNet));
+  document.getElementById("summaryIncome").textContent = "+" + formatEUR(periodIncome);
+  document.getElementById("summaryExpense").textContent = "−" + formatEUR(periodExpense);
   document.getElementById("summaryCount").textContent = String(periodTx.length);
 
+  const allTimeNoteEl = document.getElementById("allTimeSummaryNote");
+  if (allTimeNoteEl) {
+    const allSign = allNet >= 0 ? "+" : "−";
+    allTimeNoteEl.textContent =
+      `Всего по всем учтённым операциям (${allCount}): ${allSign}${formatEUR(Math.abs(allNet))} (доходы +${formatEUR(allIncome)}, расходы −${formatEUR(allExpense)}) • оценка по записям, не баланс банка`;
+  }
+
   // Плитка Сплит 50/50
-  const partnerOwes = Math.max(0, sharedExpense - partnerRefunds);
   document.getElementById("summaryShared").textContent = formatEUR(sharedExpense);
   document.getElementById("sharedWhoOwesText").textContent =
     partnerOwes > 0 ? `К возврату тебе: €${partnerOwes.toFixed(2)}` : `Расчёты закрыты ✓`;
 
-  // Виджет обязательных счетов
+  // Виджет обязательных счетов текущего месяца
   document.getElementById("billsStatusSub").textContent =
     unpaidBillsTotal > 0
-      ? `Оплачено ${paidBillsCount} из ${state.bills.length} • В резерве: €${unpaidBillsTotal.toFixed(2)}`
-      : `Все обязательные счета (${state.bills.length}) оплачены ✓`;
+      ? `В ${monthTitle}: оплачено ${paidBillsCount} из ${state.bills.length} • В резерве: €${unpaidBillsTotal.toFixed(2)}`
+      : `Все обязательные счета на ${monthTitle} (${state.bills.length}) оплачены ✓`;
 
-  // Кольцо копилки
-  document.getElementById("savingsGoalValue").textContent = "€" + Math.round(state.savingsGoal);
+  // Кольцо копилки (оценка по текущему месяцу)
+  document.getElementById("savingsGoalValue").textContent = "€" + Math.round(goal);
   document.getElementById("freeAfterSavingsValue").textContent =
-    `Свободно: €${Math.max(0, Math.round(freeAfterSavingsAndBills))}`;
+    `Оценка своб.: €${Math.max(0, Math.round(freeAfterSavingsAndBills))}`;
 
   const circumference = 175.9;
-  const ratio = state.savingsGoal > 0 ? Math.min(1, Math.max(0, netBalance / state.savingsGoal)) : 1;
+  const ratio = goal > 0 ? Math.min(1, Math.max(0, (monthIncome - monthExpense) / goal)) : 1;
   const offset = circumference - ratio * circumference;
   document.getElementById("savingsRingCircle").style.strokeDashoffset = String(offset.toFixed(1));
 
   // Умная строка инсайта
-  renderSmartInsight(periodTx, totalIncome, totalExpense, dailySafe);
+  renderSmartInsight(periodTx, periodIncome, periodExpense, dailySafe);
 
   // Лента последних операций по дням
   const recentContainer = document.getElementById("recentTxList");
   const recent = periodTx.slice(0, 7);
   if (recent.length === 0) {
     if (state.apiUrl && !hasTelegramAuth()) {
-      recentContainer.innerHTML = `<div class="empty-state">Режим LIVE: реальные данные доступны только при входе через Telegram. Для автономной работы переключи на DEMO.</div>`;
+      recentContainer.innerHTML = `<div class="empty-state">Нужен вход через Telegram: реальные данные доступны при открытии внутри бота. Для автономной работы переключи на DEMO.</div>`;
     } else {
-      recentContainer.innerHTML = `<div class="empty-state">За этот период пока нет операций</div>`;
+      recentContainer.innerHTML = `<div class="empty-state">За выбранный период нет операций</div>`;
     }
     return;
   }
@@ -670,7 +1046,7 @@ function renderHome(periodTx) {
 function renderSmartInsight(periodTx, totalIncome, totalExpense, dailySafe) {
   const el = document.getElementById("smartInsightText");
   if (periodTx.length === 0) {
-    el.textContent = "Добавь первую операцию или загрузи CSV из Swedbank.";
+    el.textContent = "Добавь операцию или выбери другой фильтр периода.";
     return;
   }
 
@@ -679,11 +1055,11 @@ function renderSmartInsight(periodTx, totalIncome, totalExpense, dailySafe) {
     .reduce((a, b) => a + Number(b.amount), 0);
 
   if (totalIncome > 0 && totalExpense < totalIncome * 0.45) {
-    el.textContent = `Отличный темп: сохранено ${Math.round(((totalIncome - totalExpense) / totalIncome) * 100)}% дохода. Дневной запас — €${dailySafe.toFixed(0)}.`;
+    el.textContent = `За период сохранено ${Math.round(((totalIncome - totalExpense) / totalIncome) * 100)}% учтённого дохода. Оценка на сегодня — €${dailySafe.toFixed(0)}.`;
   } else if (cafeSpent > 45) {
-    el.textContent = `Обрати внимание: на кафе и доставку ушло уже €${cafeSpent.toFixed(2)}.`;
+    el.textContent = `За выбранный период на кафе и доставку учтено €${cafeSpent.toFixed(2)}.`;
   } else {
-    el.textContent = `За период проведено ${periodTx.length} опер. Безопасный темп трат — до €${dailySafe.toFixed(0)} в день.`;
+    el.textContent = `За период учтено ${periodTx.length} опер. Оценка дневного лимита на этот месяц — €${dailySafe.toFixed(0)}/день.`;
   }
 }
 
@@ -742,17 +1118,25 @@ function bindTxItemClicks(container) {
   container.querySelectorAll(".tx-quick-del").forEach((delBtn) => {
     delBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (state.mutationInFlight) return;
       const targetId = delBtn.getAttribute("data-quick-del-id");
       if (!targetId) return;
-      const tx = state.transactions.find((t) => t.id === targetId);
-      const externalId = tx?.externalId || targetId;
       triggerHaptic("light");
       askNativeConfirm("Удалить эту операцию?", async () => {
-        state.transactions = state.transactions.filter((t) => t.id !== targetId);
-        saveTransactions();
-        renderAll();
-        showToast("Операция удалена");
-        await apiCallN8n("delete", { id: targetId, externalId });
+        if (state.mutationInFlight) return;
+        state.mutationInFlight = true;
+        delBtn.disabled = true;
+        try {
+          const res = await executeServerDelete(targetId);
+          if (!res.ok) {
+            showToast(`Ошибка удаления: ${res.error}`);
+            return;
+          }
+          showToast("Операция удалена");
+        } finally {
+          state.mutationInFlight = false;
+          delBtn.disabled = false;
+        }
       });
     });
   });
@@ -1017,15 +1401,17 @@ function renderGoalsModal() {
 // Шторка Обязательных счетов
 function renderBillsModal() {
   const container = document.getElementById("billsChecklist");
+  const currentYm = getCurrentYearMonth();
   container.innerHTML = state.bills
     .map((b, idx) => {
+      const paidThisMonth = isBillPaidForMonth(b, currentYm);
       return `
-        <div class="bill-row ${b.paid ? "paid" : ""}" data-bill-idx="${idx}">
+        <div class="bill-row ${paidThisMonth ? "paid" : ""}" data-bill-idx="${idx}">
           <div class="bill-left">
-            <div class="bill-check">${b.paid ? "✓" : ""}</div>
+            <div class="bill-check">${paidThisMonth ? "✓" : ""}</div>
             <div>
               <div class="bill-name">${escapeHtml(b.name)}</div>
-              <div class="bill-day">${escapeHtml(b.day)} • ${b.paid ? "Оплачено" : "Ожидает оплаты"}</div>
+              <div class="bill-day">${escapeHtml(b.day)} • ${paidThisMonth ? `Оплачено (${currentYm})` : "Ожидает оплаты в этом месяце"}</div>
             </div>
           </div>
           <div class="bill-amt">€${Number(b.amount).toFixed(2)}</div>
@@ -1039,7 +1425,10 @@ function renderBillsModal() {
       triggerHaptic("light");
       const idx = Number(row.getAttribute("data-bill-idx"));
       if (state.bills[idx]) {
-        state.bills[idx].paid = !state.bills[idx].paid;
+        const ym = getCurrentYearMonth();
+        const currentlyPaid = isBillPaidForMonth(state.bills[idx], ym);
+        state.bills[idx].paid = !currentlyPaid;
+        state.bills[idx].paidMonth = !currentlyPaid ? ym : null;
         saveBills();
         renderBillsModal();
         renderAll();
@@ -1055,7 +1444,7 @@ function renderSharedModal() {
 
   const totalMyShare = sharedTx.reduce((a, b) => a + Number(b.amount), 0);
   const totalRefunded = refundsTx.reduce((a, b) => a + Number(b.amount), 0);
-  const owedToMe = Math.max(0, totalMyShare - totalRefunded);
+  const owedToMe = Math.max(0, Math.round((totalMyShare - totalRefunded) * 100) / 100);
 
   document.getElementById("sharedSettleSummaryBox").innerHTML = `
     <div>Твоя доля в общих покупках: <strong>€${totalMyShare.toFixed(2)}</strong></div>
@@ -1072,25 +1461,46 @@ function renderSharedModal() {
     listEl.innerHTML = `<div class="empty-state">Нет совместных операций</div>`;
   } else {
     listEl.innerHTML = sharedTx.map(renderTxRowHTML).join("");
+    bindTxItemClicks(listEl);
   }
 
   const settleBtn = document.getElementById("settleSharedRefundBtn");
-  settleBtn.disabled = owedToMe <= 0;
+  settleBtn.disabled = owedToMe <= 0 || state.mutationInFlight;
   settleBtn.style.opacity = owedToMe > 0 ? "1" : "0.5";
-  settleBtn.onclick = () => {
-    if (owedToMe <= 0) return;
+  if (owedToMe <= 0) {
+    state.pendingRefundExternalId = null;
+  } else if (!state.pendingRefundExternalId) {
+    state.pendingRefundExternalId = generateAttemptExternalId("REFUND");
+  }
+
+  settleBtn.onclick = async () => {
+    if (owedToMe <= 0 || state.mutationInFlight) return;
     triggerHaptic("medium");
-    state.transactions.unshift({
-      id: "refund-" + Date.now(),
-      date: new Date().toISOString().slice(0, 10),
-      type: "income",
-      amount: Math.round(owedToMe * 100) / 100,
-      category: "Возврат средств",
-      description: "Возврат за совместные покупки 50/50"
-    });
-    saveTransactions();
-    renderSharedModal();
-    renderAll();
+    if (!state.pendingRefundExternalId) {
+      state.pendingRefundExternalId = generateAttemptExternalId("REFUND");
+    }
+    state.mutationInFlight = true;
+    settleBtn.disabled = true;
+    try {
+      const res = await executeServerCreate({
+        externalId: state.pendingRefundExternalId,
+        date: getTodayIsoLocal(),
+        type: "income",
+        amount: owedToMe,
+        category: "Возврат средств",
+        description: "Возврат за совместные покупки 50/50"
+      });
+      if (!res.ok) {
+        showToast(`Ошибка записи возврата: ${res.error}`);
+        return;
+      }
+      state.pendingRefundExternalId = null;
+      renderSharedModal();
+      showToast("Возврат доли записан");
+    } finally {
+      state.mutationInFlight = false;
+      settleBtn.disabled = owedToMe <= 0;
+    }
   };
 }
 
@@ -1116,7 +1526,7 @@ function buildTextReport(txList, titleLabel) {
     `📊 PULSE ОТЧЁТ (${titleLabel})`,
     `↑ Доходы: €${income.toFixed(2)}`,
     `↓ Расходы: €${expense.toFixed(2)}`,
-    `💰 Остаток: €${net.toFixed(2)}`,
+    `💰 Итог (Д−Р): €${net.toFixed(2)}`,
     `🎯 Свободно после копилки: €${afterSavings.toFixed(2)}`,
     ``,
     `По категориям:`
@@ -1164,7 +1574,7 @@ function parseSwedbankCSV(csvText) {
     const dk = idxDK >= 0 ? cols[idxDK].toUpperCase() : "D";
     const isCredit = dk === "K" || dk === "C";
     const type = isCredit ? "income" : "expense";
-    const dateStr = idxDate >= 0 && cols[idxDate] ? cols[idxDate].slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const dateStr = idxDate >= 0 && cols[idxDate] ? cols[idxDate].slice(0, 10) : getTodayIsoLocal();
     const rawDocNr = idxDoc >= 0 && cols[idxDoc] ? String(cols[idxDoc]).trim() : "";
     const extId = rawDocNr ? "SWED-" + rawDocNr : "";
     const localId = rawDocNr ? "swed-" + rawDocNr : `swed-noid-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1286,6 +1696,7 @@ function renderCategoryChips() {
       customInput.addEventListener("input", () => {
         const val = customInput.value.trim();
         state.selectedCategory = val || "Своя категория";
+        state.pendingFormExternalId = null;
       });
     }
   }
@@ -1293,6 +1704,7 @@ function renderCategoryChips() {
   container.querySelectorAll(".cat-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       triggerHaptic("light");
+      state.pendingFormExternalId = null;
       const cat = btn.getAttribute("data-cat");
       if (cat === "__custom__") {
         if (customInput) {
@@ -1335,6 +1747,7 @@ function switchTab(targetId) {
 function openFormModal(type = "expense", editingTx = null) {
   triggerHaptic("medium");
   document.getElementById("formError").classList.add("hidden");
+  state.pendingFormExternalId = null;
   if (editingTx) {
     state.editingTxId = editingTx.id;
     setFormType(editingTx.type);
@@ -1348,7 +1761,7 @@ function openFormModal(type = "expense", editingTx = null) {
     setFormType(type);
     document.getElementById("formTitle").textContent = "Новая операция";
     document.getElementById("txAmount").value = "";
-    document.getElementById("txDate").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("txDate").value = getTodayIsoLocal();
     document.getElementById("txDescription").value = "";
   }
   state.splitRatio = 1;
@@ -1361,9 +1774,10 @@ function openFormModal(type = "expense", editingTx = null) {
 }
 
 function openTxDetailModal(id) {
-  const tx = state.transactions.find((item) => item.id === id);
+  const tx = state.transactions.find((item) => String(item.id) === String(id));
   if (!tx) return;
-  state.selectedTxId = id;
+  state.selectedTxId = tx.id;
+  state.pendingDupExternalId = null;
   const isIncome = tx.type === "income";
   const meta = getCategoryMeta(tx.type, tx.category);
 
@@ -1377,8 +1791,8 @@ function openTxDetailModal(id) {
 }
 
 function formatHumanDayLabel(dateStr) {
-  const today = new Date().toISOString().slice(0, 10);
-  const yestDate = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today = getTodayIsoLocal();
+  const yestDate = getTodayIsoLocal(new Date(Date.now() - 86400000));
   if (dateStr === today) return "Сегодня";
   if (dateStr === yestDate) return "Вчера";
 
@@ -1400,7 +1814,7 @@ function exportTransactionsToCSV() {
   const blob = new Blob(["\uFEFF" + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `pulse_finance_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `pulse_finance_${getTodayIsoLocal()}.csv`;
   a.click();
 }
 
@@ -1421,8 +1835,14 @@ function initEvents() {
   // Умная строка ввода одной фразой (на главном экране)
   const smartInput = document.getElementById("smartQuickTextInput");
   const smartPreview = document.getElementById("smartParsePreview");
+  const smartSendBtn = document.getElementById("smartQuickSendBtn");
   const updateSmartPreview = () => {
-    const parsed = parseSmartQuickInput(smartInput.value);
+    const rawTrimmed = String(smartInput.value || "").trim();
+    if (rawTrimmed !== state.pendingSmartInputKey) {
+      state.pendingSmartExternalId = null;
+      state.pendingSmartInputKey = rawTrimmed;
+    }
+    const parsed = parseSmartQuickInput(rawTrimmed);
     if (!parsed) {
       smartPreview.classList.add("hidden");
       return;
@@ -1437,29 +1857,45 @@ function initEvents() {
     smartPreview.classList.remove("hidden");
   };
   const submitSmartQuickInput = async () => {
-    const parsed = parseSmartQuickInput(smartInput.value);
+    if (state.mutationInFlight) return;
+    const rawTrimmed = String(smartInput.value || "").trim();
+    const parsed = parseSmartQuickInput(rawTrimmed);
     if (!parsed) return;
     if (state.apiUrl && !hasTelegramAuth()) {
+      markSyncFailure("Нужен вход через Telegram");
       showToast("В режиме LIVE нужен вход через Telegram (или включи DEMO)");
       return;
     }
+    if (rawTrimmed !== state.pendingSmartInputKey || !state.pendingSmartExternalId) {
+      state.pendingSmartInputKey = rawTrimmed;
+      state.pendingSmartExternalId = generateAttemptExternalId("SMART");
+    }
+
     triggerHaptic("medium");
-    const newTx = {
-      id: "smart-" + Date.now(),
-      externalId: "SMART-" + Date.now(),
-      date: parsed.date,
-      type: parsed.type,
-      amount: parsed.amount,
-      category: parsed.category,
-      description: parsed.description
-    };
-    state.transactions.unshift(newTx);
-    saveTransactions();
-    smartInput.value = "";
-    smartPreview.classList.add("hidden");
-    renderAll();
-    showToast(`Записано: ${parsed.category} • €${parsed.amount.toFixed(2)}`);
-    await apiCallN8n("create", newTx);
+    state.mutationInFlight = true;
+    if (smartSendBtn) smartSendBtn.disabled = true;
+    try {
+      const res = await executeServerCreate({
+        externalId: state.pendingSmartExternalId,
+        date: parsed.date,
+        type: parsed.type,
+        amount: parsed.amount,
+        category: parsed.category,
+        description: parsed.description
+      });
+      if (!res.ok) {
+        showToast(`Ошибка записи: ${res.error}`);
+        return;
+      }
+      state.pendingSmartExternalId = null;
+      state.pendingSmartInputKey = "";
+      smartInput.value = "";
+      smartPreview.classList.add("hidden");
+      showToast(`Записано: ${parsed.category} • €${parsed.amount.toFixed(2)}`);
+    } finally {
+      state.mutationInFlight = false;
+      if (smartSendBtn) smartSendBtn.disabled = false;
+    }
   };
   smartInput?.addEventListener("input", updateSmartPreview);
   smartInput?.addEventListener("keydown", (e) => {
@@ -1468,7 +1904,7 @@ function initEvents() {
       submitSmartQuickInput();
     }
   });
-  document.getElementById("smartQuickSendBtn")?.addEventListener("click", submitSmartQuickInput);
+  smartSendBtn?.addEventListener("click", submitSmartQuickInput);
 
   // Шторка создания операции
   document.getElementById("fabAddBtn").addEventListener("click", () => openFormModal("expense"));
@@ -1478,10 +1914,18 @@ function initEvents() {
     document.getElementById("txFormModal").classList.add("hidden");
   });
 
+  // Сброс ключа идемпотентности при изменении полей формы
+  ["txAmount", "txDate", "txDescription"].forEach((fieldId) => {
+    document.getElementById(fieldId)?.addEventListener("input", () => {
+      state.pendingFormExternalId = null;
+    });
+  });
+
   // Быстрые купюры +€5 / +€10 / +€25 / +€50
   document.querySelectorAll(".add-amt-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       triggerHaptic("light");
+      state.pendingFormExternalId = null;
       const addVal = Number(btn.getAttribute("data-add") || 0);
       const inputEl = document.getElementById("txAmount");
       const current = Number(String(inputEl.value).replace(",", ".")) || 0;
@@ -1545,26 +1989,16 @@ function initEvents() {
   document.getElementById("quickRefreshBtn")?.addEventListener("click", async () => {
     triggerHaptic("light");
     if (state.apiUrl) {
-      if (!hasTelegramAuth()) {
-        state.transactions = [];
-        renderAll();
-        showToast("Для синхронизации LIVE открой в Telegram (или включи DEMO)");
-        return;
-      }
-      showToast("Синхронизация с API...");
-      const res = await apiCallN8n("list");
-      if (res && res.ok) {
-        state.transactions = normalizeApiTransactions(res);
-        saveTransactions();
-        renderAll();
-        showToast("Данные обновлены из облака D1");
+      showToast("Синхронизация с D1...");
+      const res = await syncTransactionsFromServer();
+      if (res.ok) {
+        showToast("Данные синхронизированы с D1");
       } else {
-        renderAll();
-        showToast("Ошибка синхронизации с API");
+        showToast(`Нет связи: ${res.error}`);
       }
     } else {
       renderAll();
-      showToast("Локальные демо-данные обновлены");
+      showToast("Режим DEMO: локальные данные");
     }
   });
 
@@ -1572,6 +2006,7 @@ function initEvents() {
   document.querySelectorAll("#quickTemplatesBar .preset-pill").forEach((chip) => {
     chip.addEventListener("click", () => {
       triggerHaptic("light");
+      state.pendingFormExternalId = null;
       setFormType(chip.getAttribute("data-type") || "expense");
       state.selectedCategory = chip.getAttribute("data-cat");
       state.splitRatio = Number(chip.getAttribute("data-split") || 1);
@@ -1589,6 +2024,7 @@ function initEvents() {
   document.querySelectorAll(".s-pill").forEach((pill) => {
     pill.addEventListener("click", () => {
       triggerHaptic("light");
+      state.pendingFormExternalId = null;
       document.querySelectorAll(".s-pill").forEach((p) => p.classList.remove("active"));
       pill.classList.add("active");
       state.splitRatio = Number(pill.getAttribute("data-split") || 1);
@@ -1625,23 +2061,32 @@ function initEvents() {
 
   // Переключатель Расход/Доход
   document.querySelectorAll(".t-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setFormType(btn.getAttribute("data-tx-type")));
+    btn.addEventListener("click", () => {
+      state.pendingFormExternalId = null;
+      setFormType(btn.getAttribute("data-tx-type"));
+    });
   });
 
-  // Сабмит формы
+  // Сабмит формы (Создание и Редактирование строго через сервер в LIVE)
   document.getElementById("txForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (state.mutationInFlight) return;
     const errEl = document.getElementById("formError");
+    const submitBtn = document.getElementById("submitTxBtn");
     errEl.classList.add("hidden");
 
     if (state.apiUrl && !hasTelegramAuth()) {
+      markSyncFailure("Нужен вход через Telegram");
       errEl.textContent = "В режиме LIVE нужен вход через Telegram (или переключи на DEMO)";
       errEl.classList.remove("hidden");
       return;
     }
 
-    const enteredAmount = Number(document.getElementById("txAmount").value.replace(",", "."));
-    const dateVal = document.getElementById("txDate").value;
+    const rawAmountStr = String(document.getElementById("txAmount").value || "").trim();
+    const enteredAmount = rawAmountStr && !rawAmountStr.startsWith("-")
+      ? Number(rawAmountStr.replace(",", "."))
+      : NaN;
+    const dateVal = String(document.getElementById("txDate").value || "").trim().slice(0, 10);
     let descVal = document.getElementById("txDescription").value.trim();
 
     const customInput = document.getElementById("txCustomCategory");
@@ -1653,55 +2098,89 @@ function initEvents() {
     }
 
     if (!Number.isFinite(enteredAmount) || enteredAmount <= 0) {
-      errEl.textContent = "Укажи сумму больше нуля";
+      errEl.textContent = "Укажи положительную сумму больше нуля";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+      errEl.textContent = "Укажи корректную дату операции";
       errEl.classList.remove("hidden");
       return;
     }
 
     const ratio = state.formType === "expense" ? state.splitRatio : 1;
     const finalAmount = Math.round(enteredAmount * ratio * 100) / 100;
+    if (finalAmount <= 0) {
+      errEl.textContent = "Сумма после деления должна быть не меньше €0.01";
+      errEl.classList.remove("hidden");
+      return;
+    }
     if (ratio < 1 && !descVal.includes("от €")) {
       descVal = `${descVal || "Общий чек"} (${Math.round(ratio * 100)}% от €${enteredAmount.toFixed(2)})`;
     }
 
-    let savedTx = null;
-    if (state.editingTxId) {
-      const idx = state.transactions.findIndex((t) => t.id === state.editingTxId);
-      if (idx >= 0) {
-        state.transactions[idx] = {
-          ...state.transactions[idx],
+    const categoryVal = String(state.selectedCategory || "Прочее").trim().slice(0, 60);
+    const descriptionVal = String(descVal || categoryVal).trim().slice(0, 250);
+
+    state.mutationInFlight = true;
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      if (state.editingTxId) {
+        const existingTx = state.transactions.find((t) => String(t.id) === String(state.editingTxId));
+        if (!existingTx) {
+          errEl.textContent = "Редактируемая операция не найдена";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        const res = await executeServerUpdate({
+          id: existingTx.id,
+          externalId: existingTx.externalId,
           date: dateVal,
           type: state.formType,
           amount: finalAmount,
-          category: state.selectedCategory,
-          description: descVal || state.selectedCategory
-        };
-        savedTx = state.transactions[idx];
+          category: categoryVal,
+          description: descriptionVal
+        });
+        if (!res.ok) {
+          errEl.textContent = `Ошибка сохранения: ${res.error}`;
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (descVal && state.formType === "expense") {
+          learnMerchantCategory(descVal, categoryVal);
+        }
+        triggerHaptic("medium");
+        document.getElementById("txFormModal").classList.add("hidden");
+        showToast("Операция обновлена");
+      } else {
+        if (!state.pendingFormExternalId) {
+          state.pendingFormExternalId = generateAttemptExternalId("APP");
+        }
+        const res = await executeServerCreate({
+          externalId: state.pendingFormExternalId,
+          date: dateVal,
+          type: state.formType,
+          amount: finalAmount,
+          category: categoryVal,
+          description: descriptionVal
+        });
+        if (!res.ok) {
+          errEl.textContent = `Ошибка сохранения: ${res.error}`;
+          errEl.classList.remove("hidden");
+          return;
+        }
+        state.pendingFormExternalId = null;
+        if (descVal && state.formType === "expense") {
+          learnMerchantCategory(descVal, categoryVal);
+        }
+        triggerHaptic("medium");
+        document.getElementById("txFormModal").classList.add("hidden");
+        showToast("Операция сохранена");
       }
-    } else {
-      savedTx = {
-        id: "tx-" + Date.now(),
-        externalId: "APP-" + Date.now(),
-        date: dateVal,
-        type: state.formType,
-        amount: finalAmount,
-        category: state.selectedCategory,
-        description: descVal || state.selectedCategory
-      };
-      state.transactions.unshift(savedTx);
-    }
-
-    if (descVal && state.formType === "expense") {
-      learnMerchantCategory(descVal, state.selectedCategory);
-    }
-
-    triggerHaptic("medium");
-    saveTransactions();
-    renderAll();
-    document.getElementById("txFormModal").classList.add("hidden");
-    showToast(state.editingTxId ? "Операция обновлена" : "Операция сохранена");
-    if (savedTx && !state.editingTxId) {
-      await apiCallN8n("create", savedTx);
+    } finally {
+      state.mutationInFlight = false;
+      if (submitBtn) submitBtn.disabled = false;
     }
   });
 
@@ -1726,8 +2205,9 @@ function initEvents() {
   });
 
   document.getElementById("confirmImportTxBtn").addEventListener("click", async () => {
-    if (!state.parsedBankTx.length) return;
+    if (!state.parsedBankTx.length || state.mutationInFlight) return;
     if (state.apiUrl && !hasTelegramAuth()) {
+      markSyncFailure("Нужен вход через Telegram");
       showToast("В режиме LIVE нужен вход через Telegram (или включи DEMO)");
       return;
     }
@@ -1736,7 +2216,6 @@ function initEvents() {
     const msgEl = document.getElementById("bankImportSuccessMsg");
 
     // Проверяем дубликаты ТОЛЬКО по надёжному банковскому externalId.
-    // Строки без externalId не отбрасываются по дате/сумме/описанию, чтобы две одинаковые покупки сохранились отдельно.
     const existingExtIds = new Set(
       state.transactions
         .map((t) => (typeof t.externalId === "string" ? t.externalId.trim() : ""))
@@ -1765,10 +2244,12 @@ function initEvents() {
     }
 
     if (state.apiUrl) {
+      state.mutationInFlight = true;
       confirmBtn.disabled = true;
       try {
         const res = await apiCallN8n("bulk_import", { items: candidateBatch }, { returnError: true });
         if (!res || !res.ok) {
+          markSyncFailure(res?.error);
           msgEl.style.color = "#dc2626";
           msgEl.textContent = `Ошибка импорта: ${res?.error || "сервер недоступен"}`;
           msgEl.classList.remove("hidden");
@@ -1776,12 +2257,7 @@ function initEvents() {
           return;
         }
 
-        const listRes = await apiCallN8n("list");
-        if (listRes) {
-          state.transactions = normalizeApiTransactions(listRes);
-          saveTransactions();
-          renderAll();
-        }
+        await syncTransactionsFromServer();
 
         triggerHaptic("medium");
         const serverInserted = Number(res.insertedCount || 0);
@@ -1796,6 +2272,7 @@ function initEvents() {
         msgEl.classList.remove("hidden");
         setTimeout(() => msgEl.classList.add("hidden"), 5000);
       } finally {
+        state.mutationInFlight = false;
         confirmBtn.disabled = false;
       }
       return;
@@ -1827,19 +2304,26 @@ function initEvents() {
     setTimeout(() => (document.getElementById("copyPeriodReportBtn").textContent = "📋 Копировать отчёт"), 2000);
   });
 
+  // Симуляция Apple Pay разрешена ТОЛЬКО в режиме DEMO
   document.getElementById("simulateApplePayBtn").addEventListener("click", () => {
+    if (state.apiUrl) {
+      showToast("Демо-симуляция Apple Pay доступна только в режиме DEMO (в LIVE данные защищены)");
+      return;
+    }
     triggerHaptic("medium");
     state.transactions.unshift({
       id: "applepay-" + Date.now(),
-      date: new Date().toISOString().slice(0, 10),
+      externalId: generateAttemptExternalId("DEMO-AP"),
+      date: getTodayIsoLocal(),
       type: "expense",
       amount: 16.4,
       category: "Продукты",
-      description: "MAXIMA LT • Apple Pay"
+      description: "MAXIMA LT • Apple Pay (DEMO)"
     });
     saveTransactions();
     renderAll();
     document.getElementById("bankModal").classList.add("hidden");
+    showToast("Демо-операция Apple Pay добавлена");
   });
 
   // Поиск и фильтры
@@ -1863,45 +2347,70 @@ function initEvents() {
   document.getElementById("okDetailModalBtn").addEventListener("click", closeDetail);
 
   document.getElementById("editTxBtn").addEventListener("click", () => {
-    const tx = state.transactions.find((t) => t.id === state.selectedTxId);
+    const tx = state.transactions.find((t) => String(t.id) === String(state.selectedTxId));
     closeDetail();
     if (tx) openFormModal(tx.type, tx);
   });
 
-  // 1-Tap Дублирование операции на сегодня
-  document.getElementById("duplicateTxBtn")?.addEventListener("click", async () => {
-    const tx = state.transactions.find((t) => t.id === state.selectedTxId);
+  // 1-Tap Дублирование операции на сегодня (только через сервер в LIVE)
+  const dupBtn = document.getElementById("duplicateTxBtn");
+  dupBtn?.addEventListener("click", async () => {
+    if (state.mutationInFlight) return;
+    const tx = state.transactions.find((t) => String(t.id) === String(state.selectedTxId));
     if (!tx) return;
     triggerHaptic("medium");
-    const copyTx = {
-      ...tx,
-      id: "dup-" + Date.now(),
-      externalId: "DUP-" + Date.now(),
-      date: new Date().toISOString().slice(0, 10)
-    };
-    state.transactions.unshift(copyTx);
-    saveTransactions();
-    closeDetail();
-    renderAll();
-    showToast("Операция продублирована на сегодня");
-    await apiCallN8n("create", copyTx);
+    if (!state.pendingDupExternalId) {
+      state.pendingDupExternalId = generateAttemptExternalId("DUP");
+    }
+    state.mutationInFlight = true;
+    dupBtn.disabled = true;
+    try {
+      const res = await executeServerCreate({
+        externalId: state.pendingDupExternalId,
+        date: getTodayIsoLocal(),
+        type: tx.type,
+        amount: tx.amount,
+        category: tx.category,
+        description: tx.description
+      });
+      if (!res.ok) {
+        showToast(`Ошибка дублирования: ${res.error}`);
+        return;
+      }
+      state.pendingDupExternalId = null;
+      closeDetail();
+      showToast("Операция продублирована на сегодня");
+    } finally {
+      state.mutationInFlight = false;
+      dupBtn.disabled = false;
+    }
   });
 
-  document.getElementById("deleteDemoTxBtn").addEventListener("click", () => {
+  const delModalBtn = document.getElementById("deleteDemoTxBtn");
+  delModalBtn.addEventListener("click", () => {
+    if (state.mutationInFlight) return;
     const targetId = state.selectedTxId;
-    const tx = state.transactions.find((t) => t.id === targetId);
-    const externalId = tx?.externalId || targetId;
+    if (!targetId) return;
     askNativeConfirm("Удалить эту операцию?", async () => {
-      state.transactions = state.transactions.filter((t) => t.id !== targetId);
-      saveTransactions();
-      closeDetail();
-      renderAll();
-      showToast("Операция удалена");
-      await apiCallN8n("delete", { id: targetId, externalId });
+      if (state.mutationInFlight) return;
+      state.mutationInFlight = true;
+      delModalBtn.disabled = true;
+      try {
+        const res = await executeServerDelete(targetId);
+        if (!res.ok) {
+          showToast(`Ошибка удаления: ${res.error}`);
+          return;
+        }
+        closeDetail();
+        showToast("Операция удалена");
+      } finally {
+        state.mutationInFlight = false;
+        delModalBtn.disabled = false;
+      }
     });
   });
 
-  // Настройки и подключение к тестовому контуру n8n
+  // Настройки и подключение к API
   const settingsModal = document.getElementById("settingsModal");
   const updateLearnedDictLabel = () => {
     const entries = Object.entries(state.learnedMerchants || {});
@@ -1937,25 +2446,19 @@ function initEvents() {
     const candidateUrl = document.getElementById("apiUrlInput").value.trim() || DEFAULT_API_URL;
     state.apiUrl = candidateUrl;
     localStorage.setItem(STORAGE_KEY_API, state.apiUrl);
+    loadActiveModeTransactions();
     updateModeBadge();
+    renderAll();
     if (!hasTelegramAuth()) {
-      state.transactions = [];
-      renderAll();
       showToast("Для запроса к API открой приложение внутри Telegram");
       return;
     }
-    const res = await apiCallN8n("list");
-    if (res && res.ok) {
-      const list = normalizeApiTransactions(res);
-      state.transactions = list;
-      saveTransactions();
-      renderAll();
+    const res = await syncTransactionsFromServer();
+    if (res.ok) {
       settingsModal.classList.add("hidden");
-      showToast(`Синхронизировано с API (${list.length} опер.)`);
+      showToast(`Синхронизировано с API (${res.count} опер.)`);
     } else {
-      state.transactions = [];
-      renderAll();
-      showToast("Ошибка синхронизации с API");
+      showToast(`Ошибка синхронизации: ${res.error}`);
     }
   });
 
@@ -1966,6 +2469,8 @@ function initEvents() {
       document.getElementById("apiUrlInput").value = "";
       state.transactions = getInitialDemoTransactions();
       state.bills = getDefaultMonthlyBills();
+      state.syncState = "demo";
+      state.showingCachedCopy = false;
       saveTransactions();
       saveBills();
       updateModeBadge();
@@ -1973,20 +2478,16 @@ function initEvents() {
       settingsModal.classList.add("hidden");
     });
   });
+
   document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
     state.apiUrl = document.getElementById("apiUrlInput").value.trim();
     localStorage.setItem(STORAGE_KEY_API, state.apiUrl);
-    updateModeBadge();
     loadActiveModeTransactions();
+    updateModeBadge();
     renderAll();
     settingsModal.classList.add("hidden");
-    if (state.apiUrl && hasTelegramAuth()) {
-      const res = await apiCallN8n("list");
-      if (res && res.ok) {
-        state.transactions = normalizeApiTransactions(res);
-        saveTransactions();
-        renderAll();
-      }
+    if (state.apiUrl) {
+      await syncTransactionsFromServer();
     }
   });
 }
@@ -2004,12 +2505,62 @@ function setFormType(type) {
 function updateModeBadge() {
   const dot = document.getElementById("modeDot");
   const text = document.getElementById("modeBadgeText");
-  if (state.apiUrl) {
-    dot.classList.add("online");
-    text.textContent = "LIVE";
-  } else {
-    dot.classList.remove("online");
+  const notice = document.getElementById("syncStatusNotice");
+  if (!dot || !text) return;
+
+  dot.classList.remove("online", "error");
+  if (notice) {
+    notice.classList.remove("error");
+    notice.classList.add("hidden");
+  }
+
+  if (!state.apiUrl) {
     text.textContent = "DEMO";
+    return;
+  }
+
+  if (!hasTelegramAuth()) {
+    dot.classList.add("error");
+    text.textContent = "Нужен вход TG";
+    if (notice) {
+      notice.textContent = "Нужен вход через Telegram (или переключи режим на DEMO в настройках).";
+      notice.classList.add("error");
+      notice.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (state.syncState === "connecting") {
+    text.textContent = "Подключение…";
+    if (notice && state.showingCachedCopy) {
+      notice.textContent = "Подключение к D1… Пока отображается сохранённая на устройстве копия.";
+      notice.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (state.syncState === "synced") {
+    dot.classList.add("online");
+    text.textContent = state.lastSyncAt ? `Синхр. ${state.lastSyncAt}` : "Синхронизировано";
+    return;
+  }
+
+  // offline_cache или сбой запроса
+  dot.classList.add("error");
+  if (state.transactions.length > 0) {
+    text.textContent = "Нет связи • кэш";
+    if (notice) {
+      notice.textContent = "Нет связи с сервером — показана сохранённая копия (данные могут быть устаревшими).";
+      notice.classList.add("error");
+      notice.classList.remove("hidden");
+    }
+  } else {
+    text.textContent = "Нет связи";
+    if (notice) {
+      notice.textContent = `Нет связи с сервером D1${state.lastSyncError ? ": " + state.lastSyncError : ""}.`;
+      notice.classList.add("error");
+      notice.classList.remove("hidden");
+    }
   }
 }
 
@@ -2021,11 +2572,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateModeBadge();
   renderAll();
   if (state.apiUrl && hasTelegramAuth()) {
-    const res = await apiCallN8n("list");
-    if (res && res.ok) {
-      state.transactions = normalizeApiTransactions(res);
-      saveTransactions();
-      renderAll();
-    }
+    await syncTransactionsFromServer();
   }
 });

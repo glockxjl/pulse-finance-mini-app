@@ -22,7 +22,7 @@
         </div>
         <div>
           <div class="brand-name">PULSE</div>
-          <div class="brand-sub" id="currentPeriodLabel">Ноябрь 2026</div>
+          <div class="brand-sub" id="currentPeriodLabel">Текущий период</div>
         </div>
       </div>
 
@@ -54,19 +54,22 @@
       <input type="date" id="dateTo" />
     </div>
 
+    <!-- Баннер статуса связи и кэша -->
+    <div class="sync-notice-bar hidden" id="syncStatusNotice"></div>
+
     <!-- ЭКРАН 1: ДАШБОРД (BENTO GRID) -->
     <main class="screen active" id="view-home">
-      <!-- Главная тёмная карта: Безопасный бюджет на сегодня + Общий баланс -->
+      <!-- Главная тёмная карта: Безопасный бюджет на сегодня + Итог за период -->
       <section class="vault-card">
         <div class="vault-glow"></div>
         <div class="vault-top">
           <div>
             <div class="vault-eyebrow-row">
-              <span class="vault-eyebrow">БЕЗОПАСНО ТРАТИТЬ СЕГОДНЯ</span>
+              <span class="vault-eyebrow">МОЖНО ТРАТИТЬ СЕГОДНЯ (ОЦЕНКА МЕСЯЦА)</span>
               <span class="health-badge" id="healthScoreBadge">92 PULSE</span>
             </div>
             <div class="vault-daily-safe sensitive-num" id="dailySafeHero">€0.00</div>
-            <span class="vault-subtext" id="dailySafeSubtext">за вычетом копилки и будущих счетов</span>
+            <span class="vault-subtext" id="dailySafeSubtext">оценка по записям текущего месяца</span>
           </div>
           <button class="swedbank-badge-btn" id="quickImportBankBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -78,18 +81,19 @@
 
         <div class="vault-bottom">
           <div class="vault-metric">
-            <span class="v-label">Общий остаток</span>
+            <span class="v-label" id="summaryBalanceLabel">Итог за месяц (Д−Р)</span>
             <span class="v-val sensitive-num" id="summaryBalance">€0.00</span>
           </div>
           <div class="vault-metric">
-            <span class="v-label">Доходы</span>
+            <span class="v-label" id="summaryIncomeLabel">Доходы (период)</span>
             <span class="v-val pos sensitive-num" id="summaryIncome">+€0.00</span>
           </div>
           <div class="vault-metric">
-            <span class="v-label">Расходы</span>
+            <span class="v-label" id="summaryExpenseLabel">Расходы (период)</span>
             <span class="v-val neg sensitive-num" id="summaryExpense">−€0.00</span>
           </div>
         </div>
+        <div class="vault-alltime-note sensitive-num" id="allTimeSummaryNote">Всего по всем учтённым операциям: €0.00 (оценка по записям, не баланс банка)</div>
       </section>
 
       <!-- Живая строка умного инсайта -->
@@ -375,10 +379,10 @@
 
         <div class="ios-shortcut-card">
           <div>
-            <strong>Автоматика iPhone (Apple Pay) <span class="deferred-badge">В планах API</span></strong>
-            <p>Демо-тест локально. Прямой приём вебхуков из iOS Shortcuts отложен до введения отдельного токена авторизации (без testBypass).</p>
+            <strong>Автоматика iPhone (Apple Pay) <span class="deferred-badge">Отложено (DEMO)</span></strong>
+            <p>Серверный маршрут <code>/api/shortcut</code> готов, но сценарий команды iPhone отложен. Кнопка ниже работает только в режиме DEMO.</p>
           </div>
-          <button type="button" class="secondary-btn compact" id="simulateApplePayBtn">Тест €16.40</button>
+          <button type="button" class="secondary-btn compact" id="simulateApplePayBtn">Демо €16.40</button>
         </div>
       </div>
     </div>
