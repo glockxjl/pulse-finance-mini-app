@@ -235,22 +235,30 @@ body.privacy-masked .sensitive-num {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 10px;
   position: relative;
   z-index: 1;
+}
+
+.vault-hero-block {
+  min-width: 0;
+  flex: 1;
 }
 
 .vault-eyebrow-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .vault-eyebrow {
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: 1.1px;
+  letter-spacing: 0.9px;
   color: var(--emerald-bright);
+  white-space: nowrap;
 }
 
 .health-badge {
@@ -261,21 +269,91 @@ body.privacy-masked .sensitive-num {
   border-radius: 6px;
   background: rgba(52, 211, 153, 0.16);
   color: var(--emerald-bright);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.vault-info-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.vault-info-btn:hover,
+.vault-info-btn[aria-expanded="true"] {
+  background: rgba(52, 211, 153, 0.24);
+  border-color: var(--emerald-bright);
+  color: #ffffff;
 }
 
 .vault-daily-safe {
   font-family: "JetBrains Mono", monospace;
-  font-size: 34px;
+  font-size: clamp(26px, 7.5vw, 34px);
   font-weight: 700;
   letter-spacing: -1px;
   line-height: 1.1;
+  word-break: break-word;
 }
 
-.vault-subtext {
-  display: block;
+.vault-info-popover {
+  position: relative;
+  z-index: 2;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.58);
-  margin-top: 4px;
+  line-height: 1.42;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.vault-popover-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #ffffff;
+  font-size: 11.5px;
+}
+
+.vault-popover-close {
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vault-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.vault-pop-row {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .swedbank-badge-btn {
@@ -292,17 +370,18 @@ body.privacy-masked .sensitive-num {
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(8px);
+  flex-shrink: 0;
 }
 
 .vault-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
-  margin: 15px 0 13px;
+  margin: 14px 0 12px;
 }
 
 .vault-bottom {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -310,17 +389,24 @@ body.privacy-masked .sensitive-num {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .v-label {
-  font-size: 11px;
+  font-size: 10.5px;
   color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .v-val {
   font-family: "JetBrains Mono", monospace;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .v-val.pos {
@@ -329,14 +415,6 @@ body.privacy-masked .sensitive-num {
 
 .v-val.neg {
   color: #fda4af;
-}
-
-.vault-alltime-note {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
-  font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.52);
 }
 
 /* ЖИВАЯ СТРОКА ИНСАЙТА */

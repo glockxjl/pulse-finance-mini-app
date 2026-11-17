@@ -59,17 +59,24 @@
 
     <!-- ЭКРАН 1: ДАШБОРД (BENTO GRID) -->
     <main class="screen active" id="view-home">
-      <!-- Главная тёмная карта: Безопасный бюджет на сегодня + Итог за период -->
-      <section class="vault-card">
+      <!-- Главная тёмная карта: Баланс по записям + компактные показатели -->
+      <section class="vault-card" id="vaultCard">
         <div class="vault-glow"></div>
         <div class="vault-top">
-          <div>
+          <div class="vault-hero-block">
             <div class="vault-eyebrow-row">
-              <span class="vault-eyebrow">МОЖНО ТРАТИТЬ СЕГОДНЯ (ОЦЕНКА МЕСЯЦА)</span>
+              <span class="vault-eyebrow">БАЛАНС ПО ЗАПИСЯМ</span>
               <span class="health-badge" id="healthScoreBadge">92 PULSE</span>
+              <button
+                type="button"
+                class="vault-info-btn"
+                id="vaultInfoToggleBtn"
+                aria-expanded="false"
+                aria-controls="vaultInfoPopover"
+                title="Пояснение расчёта"
+              >ⓘ</button>
             </div>
-            <div class="vault-daily-safe sensitive-num" id="dailySafeHero">€0.00</div>
-            <span class="vault-subtext" id="dailySafeSubtext">оценка по записям текущего месяца</span>
+            <div class="vault-daily-safe sensitive-num" id="summaryBalance">€0.00</div>
           </div>
           <button class="swedbank-badge-btn" id="quickImportBankBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -77,29 +84,41 @@
           </button>
         </div>
 
+        <!-- Компактная всплывающая панель по кнопке ⓘ внутри карточки -->
+        <div class="vault-info-popover hidden" id="vaultInfoPopover" role="region" aria-label="Пояснение показателей">
+          <div class="vault-popover-head">
+            <strong>Как считаются показатели</strong>
+            <button type="button" class="vault-popover-close" id="vaultInfoCloseBtn" aria-label="Закрыть подсказку">✕</button>
+          </div>
+          <div class="vault-popover-body">
+            <div class="vault-pop-row" id="allTimeSummaryNote">Баланс по записям — разница всех учтённых доходов и расходов в PULSE (не банковский остаток Swedbank).</div>
+            <div class="vault-pop-row" id="periodNetInfoRow">Итог выбранного периода: €0.00</div>
+            <div class="vault-pop-row" id="dailySafeSubtext">Оценка «Можно сегодня» считается по текущему месяцу.</div>
+          </div>
+        </div>
+
         <div class="vault-divider"></div>
 
         <div class="vault-bottom">
           <div class="vault-metric">
-            <span class="v-label" id="summaryBalanceLabel">Итог за месяц (Д−Р)</span>
-            <span class="v-val sensitive-num" id="summaryBalance">€0.00</span>
+            <span class="v-label" id="dailySafeLabel">Можно сегодня</span>
+            <span class="v-val sensitive-num" id="dailySafeHero">€0.00</span>
           </div>
           <div class="vault-metric">
-            <span class="v-label" id="summaryIncomeLabel">Доходы (период)</span>
+            <span class="v-label" id="summaryIncomeLabel">Доходы (мес.)</span>
             <span class="v-val pos sensitive-num" id="summaryIncome">+€0.00</span>
           </div>
           <div class="vault-metric">
-            <span class="v-label" id="summaryExpenseLabel">Расходы (период)</span>
+            <span class="v-label" id="summaryExpenseLabel">Расходы (мес.)</span>
             <span class="v-val neg sensitive-num" id="summaryExpense">−€0.00</span>
           </div>
         </div>
-        <div class="vault-alltime-note sensitive-num" id="allTimeSummaryNote">Всего по всем учтённым операциям: €0.00 (оценка по записям, не баланс банка)</div>
       </section>
 
-      <!-- Живая строка умного инсайта -->
+      <!-- Живая строка короткого совета -->
       <div class="insight-banner" id="smartInsightBanner">
         <span class="insight-spark">⚡</span>
-        <span class="insight-text" id="smartInsightText">Анализирую темп расходов...</span>
+        <span class="insight-text" id="smartInsightText">Быстрый ввод понимает чеки и сплит 50%</span>
       </div>
 
       <!-- Умный строковый ввод одной фразой (из actual-budget-telegram-bot) -->

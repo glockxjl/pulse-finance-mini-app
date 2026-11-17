@@ -963,21 +963,13 @@ function renderHome(metrics) {
   const pulseScore = Math.min(99, Math.max(40, Math.round(50 + savingsRate * 0.7)));
   document.getElementById("healthScoreBadge").textContent = `${pulseScore} PULSE`;
 
-  // Главная цифра: Оценка дневного лимита строго по текущему календарному месяцу
-  document.getElementById("dailySafeHero").textContent = formatEUR(dailySafe);
-  const formulaBreakdown = `доход мес. €${monthIncome.toFixed(0)} − расход €${monthExpense.toFixed(0)} − копилка €${goal.toFixed(0)} − счета €${unpaidBillsTotal.toFixed(0)}`;
-  if (monthIncome === 0 && monthExpense === 0) {
-    document.getElementById("dailySafeSubtext").textContent =
-      `Оценка (${monthTitle}): за текущий месяц пока нет записей (${formulaBreakdown})`;
-  } else if (freeAfterSavingsAndBills > 0) {
-    document.getElementById("dailySafeSubtext").textContent =
-      `Оценка (${monthTitle}): €${freeAfterSavingsAndBills.toFixed(0)} ÷ ${remainingDays} дн. (${formulaBreakdown})`;
-  } else {
-    document.getElementById("dailySafeSubtext").textContent =
-      `Оценка (${monthTitle}): свободный остаток €0, дефицит плана €${Math.abs(freeAfterSavingsAndBills).toFixed(0)} (${formulaBreakdown})`;
-  }
+  // 1. Главный крупный показатель: Общий баланс по всем учтённым операциям PULSE
+  document.getElementById("summaryBalance").textContent = (allNet >= 0 ? "" : "−") + formatEUR(Math.abs(allNet));
 
-  // Разделение итога за выбранный период и общего итога по всем учтённым операциям
+  // 2. Компактный показатель: Оценка «Можно сегодня» (по текущему календарному месяцу)
+  document.getElementById("dailySafeHero").textContent = formatEUR(dailySafe);
+
+  // 3. Компактные доходы и расходы за выбранный период
   const periodLabels = {
     week: { bal: "Итог за 7 дн. (Д−Р)", inc: "Доходы (7 дн.)", exp: "Расходы (7 дн.)" },
     month: { bal: "Итог месяца (Д−Р)", inc: "Доходы (мес.)", exp: "Расходы (мес.)" },
@@ -985,23 +977,43 @@ function renderHome(metrics) {
     custom: { bal: "Итог периода (Д−Р)", inc: "Доходы (пер.)", exp: "Расходы (пер.)" }
   };
   const pLbl = periodLabels[state.period] || periodLabels.month;
-  const balLblEl = document.getElementById("summaryBalanceLabel");
   const incLblEl = document.getElementById("summaryIncomeLabel");
   const expLblEl = document.getElementById("summaryExpenseLabel");
-  if (balLblEl) balLblEl.textContent = pLbl.bal;
   if (incLblEl) incLblEl.textContent = pLbl.inc;
   if (expLblEl) expLblEl.textContent = pLbl.exp;
 
-  document.getElementById("summaryBalance").textContent = (periodNet >= 0 ? "" : "−") + formatEUR(Math.abs(periodNet));
   document.getElementById("summaryIncome").textContent = "+" + formatEUR(periodIncome);
   document.getElementById("summaryExpense").textContent = "−" + formatEUR(periodExpense);
   document.getElementById("summaryCount").textContent = String(periodTx.length);
 
+  // 4. Подробное объяснение внутри всплывающей панели ⓘ (#vaultInfoPopover)
   const allTimeNoteEl = document.getElementById("allTimeSummaryNote");
   if (allTimeNoteEl) {
     const allSign = allNet >= 0 ? "+" : "−";
     allTimeNoteEl.textContent =
-      `Всего по всем учтённым операциям (${allCount}): ${allSign}${formatEUR(Math.abs(allNet))} (доходы +${formatEUR(allIncome)}, расходы −${formatEUR(allExpense)}) • оценка по записям, не баланс банка`;
+      `Баланс по записям (${allCount} опер.): ${allSign}${formatEUR(Math.abs(allNet))} (доходы +${formatEUR(allIncome)}, расходы −${formatEUR(allExpense)}). Оценка по операциям PULSE, не баланс банка Swedbank.`;
+  }
+
+  const periodNetInfoEl = document.getElementById("periodNetInfoRow");
+  if (periodNetInfoEl) {
+    const perSign = periodNet >= 0 ? "+" : "−";
+    periodNetInfoEl.textContent =
+      `${pLbl.bal}: ${perSign}${formatEUR(Math.abs(periodNet))} (операций в периоде: ${periodTx.length}).`;
+  }
+
+  const formulaBreakdown = `доход мес. €${monthIncome.toFixed(0)} − расход €${monthExpense.toFixed(0)} − копилка €${goal.toFixed(0)} − счета €${unpaidBillsTotal.toFixed(0)}`;
+  const subtextEl = document.getElementById("dailySafeSubtext");
+  if (subtextEl) {
+    if (monthIncome === 0 && monthExpense === 0) {
+      subtextEl.textContent =
+        `Можно сегодня (${monthTitle}): нет записей за текущий месяц (${formulaBreakdown}).`;
+    } else if (freeAfterSavingsAndBills > 0) {
+      subtextEl.textContent =
+        `Можно сегодня (${monthTitle}): свободно €${freeAfterSavingsAndBills.toFixed(0)} на ${remainingDays} дн. (${formulaBreakdown}).`;
+    } else {
+      subtextEl.textContent =
+        `Можно сегодня (${monthTitle}): свободный остаток €0, дефицит плана €${Math.abs(freeAfterSavingsAndBills).toFixed(0)} (${formulaBreakdown}).`;
+    }
   }
 
   // Плитка Сплит 50/50
@@ -1025,8 +1037,8 @@ function renderHome(metrics) {
   const offset = circumference - ratio * circumference;
   document.getElementById("savingsRingCircle").style.strokeDashoffset = String(offset.toFixed(1));
 
-  // Умная строка инсайта
-  renderSmartInsight(periodTx, periodIncome, periodExpense, dailySafe);
+  // Короткий совет без повторения цифр из карточки
+  renderSmartInsight(periodTx, periodIncome, periodExpense);
 
   // Лента последних операций по дням
   const recentContainer = document.getElementById("recentTxList");
@@ -1043,10 +1055,11 @@ function renderHome(metrics) {
   bindTxItemClicks(recentContainer);
 }
 
-function renderSmartInsight(periodTx, totalIncome, totalExpense, dailySafe) {
+function renderSmartInsight(periodTx, totalIncome, totalExpense) {
   const el = document.getElementById("smartInsightText");
+  if (!el) return;
   if (periodTx.length === 0) {
-    el.textContent = "Добавь операцию или выбери другой фильтр периода.";
+    el.textContent = "Добавь операцию или переключи период в верхней панели.";
     return;
   }
 
@@ -1055,11 +1068,11 @@ function renderSmartInsight(periodTx, totalIncome, totalExpense, dailySafe) {
     .reduce((a, b) => a + Number(b.amount), 0);
 
   if (totalIncome > 0 && totalExpense < totalIncome * 0.45) {
-    el.textContent = `За период сохранено ${Math.round(((totalIncome - totalExpense) / totalIncome) * 100)}% учтённого дохода. Оценка на сегодня — €${dailySafe.toFixed(0)}.`;
+    el.textContent = "Спокойный темп: больше половины доходов выбранного периода сохранено.";
   } else if (cafeSpent > 45) {
-    el.textContent = `За выбранный период на кафе и доставку учтено €${cafeSpent.toFixed(2)}.`;
+    el.textContent = "Заметная статья трат в этом периоде — кафе и доставка.";
   } else {
-    el.textContent = `За период учтено ${periodTx.length} опер. Оценка дневного лимита на этот месяц — €${dailySafe.toFixed(0)}/день.`;
+    el.textContent = "Быстрый ввод ниже понимает магазин, сумму и пометку «50%».";
   }
 }
 
@@ -1830,6 +1843,33 @@ function initEvents() {
     state.privacyMasked = !state.privacyMasked;
     localStorage.setItem(STORAGE_KEY_PRIVACY, state.privacyMasked ? "1" : "0");
     document.body.classList.toggle("privacy-masked", state.privacyMasked);
+  });
+
+  // Всплывающая панель пояснений по кнопке ⓘ в главной карточке
+  const vaultInfoBtn = document.getElementById("vaultInfoToggleBtn");
+  const vaultInfoPopover = document.getElementById("vaultInfoPopover");
+  const vaultInfoCloseBtn = document.getElementById("vaultInfoCloseBtn");
+  const setVaultPopoverOpen = (open) => {
+    if (!vaultInfoPopover || !vaultInfoBtn) return;
+    vaultInfoPopover.classList.toggle("hidden", !open);
+    vaultInfoBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  vaultInfoBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerHaptic("light");
+    const isHidden = vaultInfoPopover?.classList.contains("hidden");
+    setVaultPopoverOpen(Boolean(isHidden));
+  });
+  vaultInfoCloseBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerHaptic("light");
+    setVaultPopoverOpen(false);
+  });
+  document.addEventListener("click", (e) => {
+    if (!vaultInfoPopover || vaultInfoPopover.classList.contains("hidden")) return;
+    if (!vaultInfoPopover.contains(e.target) && e.target !== vaultInfoBtn) {
+      setVaultPopoverOpen(false);
+    }
   });
 
   // Умная строка ввода одной фразой (на главном экране)
